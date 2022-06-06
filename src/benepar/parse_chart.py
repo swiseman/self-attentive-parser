@@ -8,6 +8,8 @@ import torch.nn.functional as F
 
 from transformers import AutoConfig, AutoModel
 
+import torch_struct
+
 from . import char_lstm
 from . import decode_chart
 from . import nkutil
@@ -359,13 +361,23 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             return span_loss + tag_loss
 
     def _parse_encoded(
-        self, examples, encoded, return_compressed=False, return_scores=False
+            self, examples, encoded, return_compressed=False, return_scores=False, return_amax=False,
     ):
         with torch.no_grad():
             batch = self.pad_encoded(encoded)
             span_scores, tag_scores = self.forward(batch)
             if return_scores:
                 span_scores_np = span_scores.cpu().numpy()
+            elif return_amax: # modified from decode_chart.py
+                # Start/stop tokens don't count, so subtract 2
+                lengths = batch["valid_token_mask"].sum(-1) - 2
+                scores = span_scores.detach()
+                scores = scores - scores[..., :1]
+                if self.decoder.force_root_constituent:
+                    scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] -= 1e9
+                dist = torch_struct.TreeCRF(scores, lengths=lengths)
+                amax = dist.argmax
+                amax = amax.cpu()
             else:
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
@@ -381,6 +393,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             example_len = len(examples[i].words)
             if return_scores:
                 yield span_scores_np[i, :example_len, :example_len]
+            elif return_amax:
+                yield amax[i].nonzero(as_tuple=True)
             elif return_compressed:
                 output = self.decoder.compressed_output_from_chart(charts_np[i])
                 if tag_ids_np is not None:
@@ -408,6 +422,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         return_compressed=False,
         return_scores=False,
         subbatch_max_tokens=None,
+        return_amax=False,
     ):
         training = self.training
         self.eval()
@@ -420,14 +435,14 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 costs=self._get_lens(encoded),
                 max_cost=subbatch_max_tokens,
                 return_compressed=return_compressed,
-                return_scores=return_scores,
+                return_scores=return_scores, return_amax=return_amax,
             )
         else:
             res = self._parse_encoded(
                 examples,
                 encoded,
                 return_compressed=return_compressed,
-                return_scores=return_scores,
+                return_scores=return_scores, return_amax=return_amax,
             )
             res = list(res)
         self.train(training)
