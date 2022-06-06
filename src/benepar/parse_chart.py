@@ -131,9 +131,12 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             label_vocab=self.label_vocab,
             force_root_constituent=hparams.force_root_constituent,
         )
-        self.criterion = decode_chart.SpanClassificationMarginLoss(
-            reduction="sum", force_root_constituent=hparams.force_root_constituent
-        )
+        if hparams.mode2:
+            self.mode2 = True
+        else:
+            self.criterion = decode_chart.SpanClassificationMarginLoss(
+                reduction="sum", force_root_constituent=hparams.force_root_constituent
+            )
 
         self.parallelized_devices = None
 
@@ -193,9 +196,12 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             encoded = self.retokenizer(example.words, example.space_after)
 
         if example.tree is not None:
-            encoded["span_labels"] = torch.tensor(
-                self.decoder.chart_from_tree(example.tree)
-            )
+            if self.mode2:
+                encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
+            else:
+                encoded["span_labels"] = torch.tensor(
+                    self.decoder.chart_from_tree(example.tree)
+                )
             if self.f_tag is not None:
                 encoded["tag_labels"] = torch.tensor(
                     [-100] + [self.tag_vocab[tag] for _, tag in example.pos()] + [-100]
@@ -215,9 +221,13 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             return_tensors="pt",
         )
         if encoded_batch and "span_labels" in encoded_batch[0]:
-            batch["span_labels"] = decode_chart.pad_charts(
-                [example["span_labels"] for example in encoded_batch]
-            )
+            if self.mode2:
+                batch["span_labels"] = decode_chart.pad_charts2(
+                    [example["span_labels"] for example in encoded_batch], len(self.label_vocab))
+            else:
+                batch["span_labels"] = decode_chart.pad_charts(
+                    [example["span_labels"] for example in encoded_batch]
+                )
         if encoded_batch and "tag_labels" in encoded_batch[0]:
             batch["tag_labels"] = nn.utils.rnn.pad_sequence(
                 [example["tag_labels"] for example in encoded_batch],
@@ -333,6 +343,9 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             torch.unsqueeze(fencepost_annotations, 1)
             - torch.unsqueeze(fencepost_annotations, 2)
         )[:, :-1, 1:]
+        # now span_features[b,i,j] has (fencepost_annotations[b, j] - fencepost_annotations[b, i])
+        # where i goes thru penultimate index and j starts at 2nd index...
+        # so i guess 0,0 is now j=1 - i=0; 0,1 is j=2 - i=0;....; -1,-1 is now j=n - i=n-1
         span_scores = self.f_label(span_features)
         span_scores = torch.cat(
             [span_scores.new_zeros(span_scores.shape[:-1] + (1,)), span_scores], -1
@@ -357,6 +370,17 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             )
             tag_loss = tag_loss / batch["batch_num_tokens"]
             return span_loss + tag_loss
+
+    def compute_loss2(self, batch):
+        span_scores, _ = self.forward(batch)
+        span_labels = batch["span_labels"].to(span_scores.device)
+        losses = F.binary_cross_entropy_with_logits(span_scores, span_labels, reduction='none')
+        mask = span_labels != -100
+        span_loss = (losses*mask).sum() / mask.sum()
+        #span_loss = self.criterion(span_scores, span_labels)
+        # Divide by the total batch size, not by the subbatch size
+        # span_loss = span_loss / batch["batch_size"]
+        return span_loss
 
     def _parse_encoded(
         self, examples, encoded, return_compressed=False, return_scores=False

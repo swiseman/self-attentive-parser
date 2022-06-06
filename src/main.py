@@ -241,7 +241,10 @@ def run_train(args, hparams):
 
             batch_loss_value = 0.0
             for subbatch_size, subbatch in batch:
-                loss = parser.compute_loss(subbatch)
+                if args.mode2:
+                    loss = parser.compute_loss2(subbatch)
+                else:
+                    loss = parser.compute_loss(subbatch)
                 loss_value = float(loss.data.cpu().numpy())
                 batch_loss_value += loss_value
                 if loss_value > 0:
@@ -376,6 +379,7 @@ def main():
     subparser.add_argument("--subbatch-max-tokens", type=int, default=2000)
     subparser.add_argument("--parallelize", action="store_true")
     subparser.add_argument("--print-vocabs", action="store_true")
+    subparser.add_argument("--mode2", action="store_true")
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)
