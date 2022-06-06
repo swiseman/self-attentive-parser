@@ -27,6 +27,19 @@ def pad_charts(charts, padding_value=-100):
         padded_charts[i, :chart_size, :chart_size] = chart
     return padded_charts
 
+def pad_charts2(charts, nlabels, padding_value=-100):
+    """Pad a list of variable-length charts with `padding_value`."""
+    batch_size = len(charts)
+    max_len = max(chart.shape[0] for chart in charts)
+    padded_charts = torch.full(
+        (batch_size, max_len, max_len, nlabels),
+        padding_value,
+        dtype=charts[0].dtype,
+        device=charts[0].device)
+    for i, chart in enumerate(charts):
+        chart_size = chart.shape[0]
+        padded_charts[i, :chart_size, :chart_size] = chart
+    return padded_charts
 
 def collapse_unary_strip_pos(tree, strip_top=True):
     """Collapse unary chains and strip part of speech tags."""
@@ -123,7 +136,7 @@ class ChartDecoder:
                     label_set.add(label)
         label_set = [""] + sorted(label_set)
         return {label: i for i, label in enumerate(label_set)}
-    
+
     @staticmethod
     def infer_force_root_constituent(trees):
         for tree in trees:
@@ -144,6 +157,20 @@ class ChartDecoder:
             # entry as a constituent.
             if label in self.label_vocab:
                 chart[start, end] = self.label_vocab[label]
+        return chart
+
+    def chart_from_tree2(self, tree):
+        spans = get_labeled_spans(tree)
+        num_words = len(tree.leaves())
+        # -100s on the lower triangle, zeros elsewhere
+        chart = torch.full((num_words, num_words), -100).tril(-1).unsqueeze(2).expand(
+            num_words, num_words, len(self.label_vocab)).contiguous()
+        for start, end, label in spans:
+            # Previously unseen unary chains can occur in the dev/test sets.
+            # For now, we ignore them and don't mark the corresponding chart
+            # entry as a constituent.
+            if label in self.label_vocab:
+                chart[start, end, label] = 1.0
         return chart
 
     def charts_from_pytorch_scores_batched(self, scores, lengths):
