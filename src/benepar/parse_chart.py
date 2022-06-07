@@ -379,6 +379,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         span_labels = batch["span_labels"].to(span_scores.device)
         losses = F.binary_cross_entropy_with_logits(span_scores, span_labels, reduction='none')
         mask = span_labels != -100
+        # also we don't really need to predict the 0 label
+        mask[..., 0] = 0
         span_loss = (losses*mask).sum() / mask.sum()
         #span_loss = self.criterion(span_scores, span_labels)
         # Divide by the total batch size, not by the subbatch size
@@ -386,7 +388,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         return span_loss
 
     def _parse_encoded(
-            self, examples, encoded, return_compressed=False, return_scores=False, return_amax=False,
+            self, examples, encoded, return_compressed=False, return_scores=False,
+            return_amax=False,
     ):
         with torch.no_grad():
             batch = self.pad_encoded(encoded)
@@ -406,9 +409,13 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             else:
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
-                charts_np = self.decoder.charts_from_pytorch_scores_batched(
-                    span_scores, lengths.to(span_scores.device)
-                )
+                if self.mode2:
+                    charts_np = self.decoder.charts_from_pytorch_scores_batched2(
+                        span_scores, lengths.to(span_scores.device))
+                else:
+                    charts_np = self.decoder.charts_from_pytorch_scores_batched(
+                        span_scores, lengths.to(span_scores.device)
+                    )
             if tag_scores is not None:
                 tag_ids_np = tag_scores.argmax(-1).cpu().numpy()
             else:

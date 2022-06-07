@@ -201,6 +201,25 @@ class ChartDecoder:
             chart[:length, :length] for chart, length in zip(padded_charts, lengths)
         ]
 
+    def charts_from_pytorch_scores_batched2(self, scores, lengths):
+        scores = scores.detach()
+        #scores = scores - scores[..., :1]
+        # if self.force_root_constituent: #  not necessary rly
+        #     scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] -= 1e9
+
+        # get rid of padding stuff
+        is_pad = torch.arange(scores.size(1)).view(1, -1) >= lengths.view(-1, 1)
+        scores[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
+
+        # for now we'll take highest thing assuming it's higher than thresh?
+        thresh = 0.0 # just use a thresh for now
+        maxes, argmaxes = scores.max(-1)
+        argmaxes[maxes <= thresh] = 0
+        padded_charts = argmaxes.cpu().numpy()
+        return [
+            chart[:length, :length] for chart, length in zip(padded_charts, lengths)
+        ]
+
     def compressed_output_from_chart(self, chart):
         chart_with_filled_diagonal = chart.copy()
         np.fill_diagonal(chart_with_filled_diagonal, 1)
