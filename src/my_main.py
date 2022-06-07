@@ -340,7 +340,6 @@ def run_test(args):
         subbatch_max_tokens=args.subbatch_max_tokens, return_amax=True)
     torch.save(preds, "pred-train.pt")
 
-    #import ipdb; ipdb.set_trace()
     preds = parser.parse(
         dev_treebank.without_gold_annotations(),
         subbatch_max_tokens=args.subbatch_max_tokens, return_amax=True)

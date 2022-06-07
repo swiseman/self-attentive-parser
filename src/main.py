@@ -130,6 +130,7 @@ def run_train(args, hparams):
         )
         print("Set hparams.force_root_constituent to", hparams.force_root_constituent)
 
+    hparams.mode2 = args.mode2
     print("Initializing model...")
     parser = parse_chart.ChartParser(
         tag_vocab=tag_vocab,

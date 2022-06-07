@@ -133,9 +133,10 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             label_vocab=self.label_vocab,
             force_root_constituent=hparams.force_root_constituent,
         )
-        if hparams.mode2:
+        if hasattr(hparams, "mode2") and hparams.mode2:
             self.mode2 = True
         else:
+            self.mode2 = False
             self.criterion = decode_chart.SpanClassificationMarginLoss(
                 reduction="sum", force_root_constituent=hparams.force_root_constituent
             )

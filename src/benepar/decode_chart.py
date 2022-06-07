@@ -170,7 +170,7 @@ class ChartDecoder:
             # For now, we ignore them and don't mark the corresponding chart
             # entry as a constituent.
             if label in self.label_vocab:
-                chart[start, end, label] = 1.0
+                chart[start, end, self.label_vocab[label]] = 1.0
         return chart
 
     def charts_from_pytorch_scores_batched(self, scores, lengths):
