@@ -188,6 +188,7 @@ def run_train(args, hparams):
             dev_treebank.without_gold_annotations(),
             subbatch_max_tokens=args.subbatch_max_tokens,
         )
+        #import ipdb; ipdb.set_trace()
         dev_fscore = evaluate.evalb(args.evalb_dir, dev_treebank.trees, dev_predicted)
 
         print(

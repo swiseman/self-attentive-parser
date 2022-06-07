@@ -202,17 +202,21 @@ class ChartDecoder:
         ]
 
     def charts_from_pytorch_scores_batched2(self, scores, lengths):
+        # import ipdb; ipdb.set_trace()
         scores = scores.detach()
         #scores = scores - scores[..., :1]
-        # if self.force_root_constituent: #  not necessary rly
-        #     scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] -= 1e9
+        thresh = 0.0 # just use a thresh for now
+        if self.force_root_constituent: 
+            scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] = thresh - 1.0
 
-        # get rid of padding stuff
-        is_pad = torch.arange(scores.size(1)).view(1, -1) >= lengths.view(-1, 1)
+        # get rid of padding and tril stuff
+        maxlen = scores.size(1)
+        arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
+        is_pad = arng >= lengths.view(-1, 1)
         scores[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
+        scores[(arng.view(-1, 1) >= arng).unsqueeze(0).unsqueeze(-1).expand(scores.size())] = -float("inf")
 
         # for now we'll take highest thing assuming it's higher than thresh?
-        thresh = 0.0 # just use a thresh for now
         maxes, argmaxes = scores.max(-1)
         argmaxes[maxes <= thresh] = 0
         padded_charts = argmaxes.cpu().numpy()

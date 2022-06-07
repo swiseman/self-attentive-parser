@@ -375,12 +375,13 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             return span_loss + tag_loss
 
     def compute_loss2(self, batch):
+        #import ipdb; ipdb.set_trace()
         span_scores, _ = self.forward(batch)
         span_labels = batch["span_labels"].to(span_scores.device)
-        losses = F.binary_cross_entropy_with_logits(span_scores, span_labels, reduction='none')
+        losses = F.binary_cross_entropy_with_logits( # leaving -100 labels but masking them later
+            span_scores, span_labels.to(span_scores.dtype), reduction='none')
         mask = span_labels != -100
-        # also we don't really need to predict the 0 label
-        mask[..., 0] = 0
+        mask[..., 0] = 0 # also we don't really need to predict the 0 label
         span_loss = (losses*mask).sum() / mask.sum()
         #span_loss = self.criterion(span_scores, span_labels)
         # Divide by the total batch size, not by the subbatch size
@@ -421,6 +422,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             else:
                 tag_ids_np = None
 
+        #import ipdb; ipdb.set_trace()
         for i in range(len(encoded)):
             example_len = len(examples[i].words)
             if return_scores:
