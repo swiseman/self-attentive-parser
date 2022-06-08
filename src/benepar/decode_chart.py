@@ -145,11 +145,11 @@ class ChartDecoder:
                     return False
         return True
 
-    def chart_from_tree(self, tree):
+    def chart_from_tree(self, tree, mode=None):
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
         chart = np.full((num_words, num_words), -100, dtype=int)
-        chart = np.tril(chart, -1)
+        chart = np.tril(chart, -1) if mode is None else np.tril(chart)
         # Now all invalid entries are filled with -100, and valid entries with 0
         for start, end, label in spans:
             # Previously unseen unary chains can occur in the dev/test sets.
@@ -226,7 +226,6 @@ class ChartDecoder:
         ]
 
     def charts_from_pytorch_scores_batched3(self, scores, lengths):
-        # import ipdb; ipdb.set_trace()
         scores = scores.detach()
         #scores = scores - scores[..., :1]
         if self.force_root_constituent:

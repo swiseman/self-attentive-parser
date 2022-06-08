@@ -203,7 +203,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
             else:
                 encoded["span_labels"] = torch.tensor(
-                    self.decoder.chart_from_tree(example.tree)
+                    self.decoder.chart_from_tree(example.tree, mode=self.mode)
                 )
             if self.f_tag is not None:
                 encoded["tag_labels"] = torch.tensor(
