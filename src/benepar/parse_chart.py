@@ -133,10 +133,10 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             label_vocab=self.label_vocab,
             force_root_constituent=hparams.force_root_constituent,
         )
-        if hasattr(hparams, "mode2") and hparams.mode2:
-            self.mode2 = True
+        if hasattr(hparams, "mode") and hparams.mode:
+            self.mode = hparams.mode
         else:
-            self.mode2 = False
+            self.mode = None
             self.criterion = decode_chart.SpanClassificationMarginLoss(
                 reduction="sum", force_root_constituent=hparams.force_root_constituent
             )
@@ -199,7 +199,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             encoded = self.retokenizer(example.words, example.space_after)
 
         if example.tree is not None:
-            if self.mode2:
+            if self.mode == "bce":
                 encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
             else:
                 encoded["span_labels"] = torch.tensor(
@@ -224,7 +224,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             return_tensors="pt",
         )
         if encoded_batch and "span_labels" in encoded_batch[0]:
-            if self.mode2:
+            if self.mode == "bce":
                 batch["span_labels"] = decode_chart.pad_charts2(
                     [example["span_labels"] for example in encoded_batch], len(self.label_vocab))
             else:
@@ -378,11 +378,16 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         #import ipdb; ipdb.set_trace()
         span_scores, _ = self.forward(batch)
         span_labels = batch["span_labels"].to(span_scores.device)
-        losses = F.binary_cross_entropy_with_logits( # leaving -100 labels but masking them later
-            span_scores, span_labels.to(span_scores.dtype), reduction='none')
-        mask = span_labels != -100
-        mask[..., 0] = 0 # also we don't really need to predict the 0 label
-        span_loss = (losses*mask).sum() / mask.sum()
+        if self.mode == "bce":
+            losses = F.binary_cross_entropy_with_logits( # leaving -100 labels but masking em later
+                span_scores, span_labels.to(span_scores.dtype), reduction='none')
+            mask = span_labels != -100
+            mask[..., 0] = 0 # also we don't really need to predict the 0 label
+            span_loss = (losses*mask).sum() / mask.sum()
+        else:
+            losses = F.cross_entropy(
+                span_scores.view(-1, span_scores.size(3)), span_labels.view(-1))
+            span_loss = losses # should already only avg over stuff that isn't -100
         #span_loss = self.criterion(span_scores, span_labels)
         # Divide by the total batch size, not by the subbatch size
         # span_loss = span_loss / batch["batch_size"]
@@ -410,8 +415,11 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             else:
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
-                if self.mode2:
+                if self.mode == "bce":
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
+                        span_scores, lengths.to(span_scores.device))
+                elif self.mode == "mlr":
+                    charts_np = self.decoder.charts_from_pytorch_scores_batched3(
                         span_scores, lengths.to(span_scores.device))
                 else:
                     charts_np = self.decoder.charts_from_pytorch_scores_batched(

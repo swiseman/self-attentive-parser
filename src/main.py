@@ -130,7 +130,7 @@ def run_train(args, hparams):
         )
         print("Set hparams.force_root_constituent to", hparams.force_root_constituent)
 
-    hparams.mode2 = args.mode2
+    hparams.mode = args.mode
     print("Initializing model...")
     parser = parse_chart.ChartParser(
         tag_vocab=tag_vocab,
@@ -381,7 +381,7 @@ def main():
     subparser.add_argument("--subbatch-max-tokens", type=int, default=2000)
     subparser.add_argument("--parallelize", action="store_true")
     subparser.add_argument("--print-vocabs", action="store_true")
-    subparser.add_argument("--mode2", action="store_true")
+    subparser.add_argument("--mode", type="str", default=None, choices=["bce", "mlr"])
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)

@@ -206,7 +206,7 @@ class ChartDecoder:
         scores = scores.detach()
         #scores = scores - scores[..., :1]
         thresh = 0.0 # just use a thresh for now
-        if self.force_root_constituent: 
+        if self.force_root_constituent:
             scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] = thresh - 1.0
 
         # get rid of padding and tril stuff
@@ -214,11 +214,32 @@ class ChartDecoder:
         arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
         is_pad = arng >= lengths.view(-1, 1)
         scores[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
-        scores[(arng.view(-1, 1) >= arng).unsqueeze(0).unsqueeze(-1).expand(scores.size())] = -float("inf")
+        scores[(arng.view(-1, 1) >= arng).unsqueeze(0).unsqueeze(-1).expand(
+            scores.size())] = -float("inf")
 
         # for now we'll take highest thing assuming it's higher than thresh?
         maxes, argmaxes = scores.max(-1)
         argmaxes[maxes <= thresh] = 0
+        padded_charts = argmaxes.cpu().numpy()
+        return [
+            chart[:length, :length] for chart, length in zip(padded_charts, lengths)
+        ]
+
+    def charts_from_pytorch_scores_batched3(self, scores, lengths):
+        # import ipdb; ipdb.set_trace()
+        scores = scores.detach()
+        #scores = scores - scores[..., :1]
+        if self.force_root_constituent:
+            scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] -= 1.0 # made up
+
+        maxes, argmaxes = scores.max(-1)
+        # get rid of padding and tril stuff
+        maxlen = scores.size(1)
+        arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
+        is_pad = arng >= lengths.view(-1, 1)
+        argmaxes[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = 0
+        argmaxes[(arng.view(-1, 1) >= arng).unsqueeze(0).expand(argmaxes.size())] = 0
+
         padded_charts = argmaxes.cpu().numpy()
         return [
             chart[:length, :length] for chart, length in zip(padded_charts, lengths)
