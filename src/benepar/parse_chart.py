@@ -113,7 +113,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.Linear(hparams.d_model, hparams.d_label_hidden),
             nn.LayerNorm(hparams.d_label_hidden),
             nn.ReLU(),
-            nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+            #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+            nn.Linear(hparams.d_label_hidden, len(label_vocab)),
         )
 
         if hparams.predict_tags:
@@ -259,7 +260,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             res.append((len(ids), subbatch))
         return res
 
-    def forward(self, batch):
+    def rulforward(self, batch):
         valid_token_mask = batch["valid_token_mask"].to(self.output_device)
 
         if (
@@ -355,6 +356,81 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         )
         return span_scores, tag_scores
 
+    def forward(self, batch):
+        valid_token_mask = batch["valid_token_mask"].to(self.output_device)
+
+        if (
+            self.encoder is not None
+            and valid_token_mask.shape[1] > self.add_timing.timing_table.shape[0]
+        ):
+            raise ValueError(
+                "Sentence of length {} exceeds the maximum supported length of "
+                "{}".format(
+                    valid_token_mask.shape[1] - 2,
+                    self.add_timing.timing_table.shape[0] - 2,
+                )
+            )
+
+        if self.char_encoder is not None:
+            assert isinstance(self.char_encoder, char_lstm.CharacterLSTM)
+            char_ids = batch["char_ids"].to(self.device)
+            extra_content_annotations = self.char_encoder(char_ids, valid_token_mask)
+        elif self.pretrained_model is not None:
+            input_ids = batch["input_ids"].to(self.device)
+            words_from_tokens = batch["words_from_tokens"].to(self.output_device)
+            pretrained_attention_mask = batch["attention_mask"].to(self.device)
+
+            extra_kwargs = {}
+            if "token_type_ids" in batch:
+                extra_kwargs["token_type_ids"] = batch["token_type_ids"].to(self.device)
+            if "decoder_input_ids" in batch:
+                extra_kwargs["decoder_input_ids"] = batch["decoder_input_ids"].to(self.device)
+                extra_kwargs["decoder_attention_mask"] = batch["decoder_attention_mask"].to(self.device)
+
+            pretrained_out = self.pretrained_model(
+                input_ids, attention_mask=pretrained_attention_mask, **extra_kwargs)
+            features = pretrained_out.last_hidden_state.to(self.output_device)
+            features = features[
+                torch.arange(features.shape[0])[:, None],
+                # Note that words_from_tokens uses index -100 for invalid positions
+                F.relu(words_from_tokens)]
+            features.masked_fill_(~valid_token_mask[:, :, None], 0)
+            if self.encoder is not None:
+                extra_content_annotations = self.project_pretrained(features)
+
+        assert self.pretrained_model is not None
+        annotations = self.project_pretrained(features)
+
+        if self.f_tag is not None:
+            tag_scores = self.f_tag(annotations)
+        else:
+            tag_scores = None
+
+        """
+        fencepost_annotations = torch.cat(
+            [annotations[:, :-1, : self.d_model // 2],
+             annotations[:, 1:, self.d_model // 2 :],], -1,)
+
+        # Note that the bias added to the final layer norm is useless because
+        # this subtraction gets rid of it
+        span_features = (
+            torch.unsqueeze(fencepost_annotations, 1)
+            - torch.unsqueeze(fencepost_annotations, 2))[:, :-1, 1:]
+        """
+
+        annotations = annotations[:, 1:-1] # strip bos, eos
+        bsz, T, _ = annotations.size()
+        halfsz = self.d_model // 2
+        span_features = torch.cat( # bsz x T x T x dim
+            [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
+             annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)
+        # span_features[b,j,i] is cat of (1st half i-th token rep, 2nd half j-th token rep)
+
+        span_scores = self.f_label(span_features)
+        #span_scores = torch.cat(
+        #    [span_scores.new_zeros(span_scores.shape[:-1] + (1,)), span_scores], -1)
+        return span_scores, tag_scores
+    
     def compute_loss(self, batch):
         span_scores, tag_scores = self.forward(batch)
         span_labels = batch["span_labels"].to(span_scores.device)
@@ -381,6 +457,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         if self.mode == "bce":
             losses = F.binary_cross_entropy_with_logits( # leaving -100 labels but masking em later
                 span_scores, span_labels.to(span_scores.dtype), reduction='none')
+                #pos_weight=torch.full((span_labels.size(-1),), 1.5, device=span_scores.device))
             mask = span_labels != -100
             mask[..., 0] = 0 # also we don't really need to predict the 0 label
             span_loss = (losses*mask).sum() / mask.sum()

@@ -163,7 +163,8 @@ class ChartDecoder:
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
         # -100s on the lower triangle, zeros elsewhere
-        chart = torch.full((num_words, num_words), -100).tril(-1).unsqueeze(2).expand(
+        #chart = torch.full((num_words, num_words), -100).tril(-1).unsqueeze(2).expand(
+        chart = torch.full((num_words, num_words), -100).tril().unsqueeze(2).expand(
             num_words, num_words, len(self.label_vocab)).contiguous()
         for start, end, label in spans:
             # Previously unseen unary chains can occur in the dev/test sets.
