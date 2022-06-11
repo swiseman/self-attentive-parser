@@ -245,6 +245,49 @@ class ChartDecoder:
             chart[:length, :length] for chart, length in zip(padded_charts, lengths)
         ]
 
+    def pants(self, scores, lengths):
+        scores = scores.detach()
+        #scores = scores - scores[..., :1]
+        if self.force_root_constituent:
+            scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] -= 1.0 # made up
+
+        scores[..., 0] = -float("inf") # never pick a 0 label
+        maxes, argmaxes = scores.max(-1) # bsz x T x T
+
+        # get rid of padding and tril stuff
+        bsz, maxlen, _ = maxes.size()
+        arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
+        is_pad = arng >= lengths.view(-1, 1)
+        maxes[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
+        maxes[(arng.view(-1, 1) >= arng).unsqueeze(0).expand(
+            maxes.size())] = -float("inf")
+
+        stop_thresh = 0 # 
+        srtd, srtidxs = maxes.view(bsz, -1).sort(axis=-1, descending=True)
+        nleft = lengths.clone()
+        outputs = []
+        for b in range(bsz):
+            spans = []
+            for i in range(lengths[b].item()):
+                flat_idx = srtidxs[b, i].item()
+                l = flat_idx // maxlen
+                r = flat_idx % maxlen + 1 # exclusive
+                if any((lp < l <= rp < r) or (l < lp <= r < rp)
+                       for (lp, rp, _) in spans):
+                    continue
+                spans.append((l, r, argmaxes[b, l, r-1].item()))
+                nleft[b] -= (r-l)
+                # may want to keep going until everything compatible is taken???
+                if nleft[b].item() <= 0 and srtd[b, i+1].item() < stop_thresh:
+                    # add diagonal
+                    spans.extend([(i, i+1, 1) for i in range(lengths[b].item())])
+                    spans.sort(key=lambda x: (-x[1], x[0])) # maybe better to sort in numpy?
+                    spans = np.array(spans) # first col is starts, then ends, then labels
+                    outputs.append(CompressedParserOutput(
+                        starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))
+                    break
+        return outputs
+
     def compressed_output_from_chart(self, chart):
         chart_with_filled_diagonal = chart.copy()
         np.fill_diagonal(chart_with_filled_diagonal, 1)

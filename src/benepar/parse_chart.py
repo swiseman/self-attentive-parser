@@ -385,7 +385,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 extra_kwargs["token_type_ids"] = batch["token_type_ids"].to(self.device)
             if "decoder_input_ids" in batch:
                 extra_kwargs["decoder_input_ids"] = batch["decoder_input_ids"].to(self.device)
-                extra_kwargs["decoder_attention_mask"] = batch["decoder_attention_mask"].to(self.device)
+                extra_kwargs["decoder_attention_mask"] = batch["decoder_attention_mask"].to(
+                    self.device)
 
             pretrained_out = self.pretrained_model(
                 input_ids, attention_mask=pretrained_attention_mask, **extra_kwargs)
@@ -430,7 +431,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         #span_scores = torch.cat(
         #    [span_scores.new_zeros(span_scores.shape[:-1] + (1,)), span_scores], -1)
         return span_scores, tag_scores
-    
+
     def compute_loss(self, batch):
         span_scores, tag_scores = self.forward(batch)
         span_labels = batch["span_labels"].to(span_scores.device)
@@ -496,8 +497,10 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
                         span_scores, lengths.to(span_scores.device))
                 elif self.mode == "mlr":
-                    charts_np = self.decoder.charts_from_pytorch_scores_batched3(
-                        span_scores, lengths.to(span_scores.device))
+                    # charts_np = self.decoder.charts_from_pytorch_scores_batched3(
+                    #     span_scores, lengths.to(span_scores.device))
+                    # really a list of compressed outputs now.
+                    charts_np = self.decoder.pants(span_scores, lengths.to(span_scores.device))
                 else:
                     charts_np = self.decoder.charts_from_pytorch_scores_batched(
                         span_scores, lengths.to(span_scores.device)
@@ -519,6 +522,9 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 if tag_ids_np is not None:
                     output = output.with_tags(tag_ids_np[i, 1 : example_len + 1])
                 yield output
+            elif self.mode == "mlr":
+                leaves = examples[i].pos()
+                yield charts_np[i].to_tree(leaves, self.decoder.label_from_index)
             else:
                 if tag_scores is None:
                     leaves = examples[i].pos()
