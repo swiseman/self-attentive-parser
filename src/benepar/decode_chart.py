@@ -160,6 +160,7 @@ class ChartDecoder:
         return chart
 
     def chart_from_tree2(self, tree):
+        import ipdb; ipdb.set_trace()
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
         # -100s on the lower triangle, zeros elsewhere

@@ -78,6 +78,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 )
             d_pretrained = self.pretrained_model.config.hidden_size
 
+            """
             if hparams.use_encoder:
                 self.project_pretrained = nn.Linear(
                     d_pretrained, hparams.d_model // 2, bias=False
@@ -86,6 +87,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 self.project_pretrained = nn.Linear(
                     d_pretrained, hparams.d_model, bias=False
                 )
+            """
 
         if hparams.use_encoder:
             self.morpho_emb_dropout = FeatureDropout(hparams.morpho_emb_dropout)
@@ -110,6 +112,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             self.add_timing = None
             self.encoder = None
 
+        """
         self.f_label = nn.Sequential(
             nn.Linear(hparams.d_model, hparams.d_label_hidden),
             nn.LayerNorm(hparams.d_label_hidden),
@@ -117,6 +120,14 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
             nn.Linear(hparams.d_label_hidden, len(label_vocab)),
         )
+        """
+        self.f_label = nn.Sequential(
+            nn.Linear(d_pretrained, d_pretrained),
+            nn.GELU(),
+            nn.LayerNorm(d_pretrained),
+            #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+            nn.Linear(d_pretrained, len(label_vocab)),
+        )        
 
         if hparams.predict_tags:
             self.f_tag = nn.Sequential(
@@ -403,7 +414,11 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 extra_content_annotations = self.project_pretrained(features)
 
         assert self.pretrained_model is not None
+
+        """
         annotations = self.project_pretrained(features)
+        """
+        annotations = features
 
         if self.f_tag is not None:
             tag_scores = self.f_tag(annotations)
@@ -423,8 +438,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         """
 
         annotations = annotations[:, 1:-1] # strip bos, eos
-        bsz, T, _ = annotations.size()
-        halfsz = self.d_model // 2
+        bsz, T, annsz = annotations.size()
+        halfsz = annsz // 2
         span_features = torch.cat( # bsz x T x T x dim
             [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
              annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)
@@ -463,7 +478,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 span_scores, span_labels.to(span_scores.dtype), reduction='none')
                 #pos_weight=torch.full((span_labels.size(-1),), 1.5, device=span_scores.device))
             mask = span_labels != -100
-            mask[..., 0] = 0 # also we don't really need to predict the 0 label
+            #mask[..., 0] = 0 # also we don't really need to predict the 0 label
             span_loss = (losses*mask).sum() / mask.sum()
         else:
             losses = F.cross_entropy(

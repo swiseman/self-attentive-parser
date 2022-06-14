@@ -147,12 +147,31 @@ def run_train(args, hparams):
         print("Not using CUDA!")
 
     print("Initializing optimizer...")
-    trainable_parameters = [
-        param for param in parser.parameters() if param.requires_grad
+    #trainable_parameters = [
+    #    param for param in parser.parameters() if param.requires_grad
+    #]
+    #optimizer = torch.optim.Adam(
+    #    trainable_parameters, lr=hparams.learning_rate, betas=(0.9, 0.98), eps=1e-9
+    #)
+
+    # my stuff
+    hparams.learning_rate = 0.00005
+    hparams.weight_decay = 0.0001
+    hparams.learning_rate_warmup_steps = 160
+    hparams.clip_grad_norm = 1.0
+    
+    no_decay = ["bias", "LayerNorm.weight"]
+    optimizer_grouped_parameters = [
+        {
+            "params": [p for n, p in parser.named_parameters() if not any(nd in n for nd in no_decay)],
+            "weight_decay": hparams.weight_decay,
+        },
+        {
+            "params": [p for n, p in parser.named_parameters() if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0,
+        },
     ]
-    optimizer = torch.optim.Adam(
-        trainable_parameters, lr=hparams.learning_rate, betas=(0.9, 0.98), eps=1e-9
-    )
+    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=hparams.learning_rate)
 
     scheduler = learning_rates.WarmupThenReduceLROnPlateau(
         optimizer,
@@ -163,10 +182,10 @@ def run_train(args, hparams):
         verbose=True,
     )
 
-    clippable_parameters = trainable_parameters
-    grad_clip_threshold = (
-        np.inf if hparams.clip_grad_norm == 0 else hparams.clip_grad_norm
-    )
+    #clippable_parameters = trainable_parameters
+    #grad_clip_threshold = (
+    #    np.inf if hparams.clip_grad_norm == 0 else hparams.clip_grad_norm
+    #)
 
     print("Training...")
     total_processed = 0
@@ -257,7 +276,8 @@ def run_train(args, hparams):
                 current_processed += subbatch_size
 
             grad_norm = torch.nn.utils.clip_grad_norm_(
-                clippable_parameters, grad_clip_threshold
+                #clippable_parameters, grad_clip_threshold
+                parser.parameters(), hparams.clip_grad_norm
             )
 
             optimizer.step()
