@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 from transformers import AutoConfig, AutoModel
 
+import nltk
 import torch_struct
 
 from . import char_lstm
@@ -141,6 +142,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             self.criterion = decode_chart.SpanClassificationMarginLoss(
                 reduction="sum", force_root_constituent=hparams.force_root_constituent
             )
+        if hasattr(hparams, "stop_thresh"):
+            self.stop_thresh = hparams.stop_thresh
 
         self.parallelized_devices = None
 
@@ -497,10 +500,11 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
                         span_scores, lengths.to(span_scores.device))
                 elif self.mode == "mlr":
-                    # charts_np = self.decoder.charts_from_pytorch_scores_batched3(
-                    #     span_scores, lengths.to(span_scores.device))
+                    charts_np = self.decoder.charts_from_pytorch_scores_batched3(
+                         span_scores, lengths.to(span_scores.device))
                     # really a list of compressed outputs now.
-                    charts_np = self.decoder.pants(span_scores, lengths.to(span_scores.device))
+                    #charts_np = self.decoder.pants(
+                    #    span_scores, lengths.to(span_scores.device), self.stop_thresh)
                 else:
                     charts_np = self.decoder.charts_from_pytorch_scores_batched(
                         span_scores, lengths.to(span_scores.device)
@@ -510,7 +514,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             else:
                 tag_ids_np = None
 
-        #import ipdb; ipdb.set_trace()
         for i in range(len(encoded)):
             example_len = len(examples[i].words)
             if return_scores:
@@ -522,9 +525,9 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 if tag_ids_np is not None:
                     output = output.with_tags(tag_ids_np[i, 1 : example_len + 1])
                 yield output
-            elif self.mode == "mlr":
-                leaves = examples[i].pos()
-                yield charts_np[i].to_tree(leaves, self.decoder.label_from_index)
+            #elif self.mode == "mlr":
+            #    leaves = examples[i].pos()
+            #    yield charts_np[i].to_tree(leaves, self.decoder.label_from_index)
             else:
                 if tag_scores is None:
                     leaves = examples[i].pos()

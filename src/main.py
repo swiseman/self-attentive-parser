@@ -131,6 +131,7 @@ def run_train(args, hparams):
         print("Set hparams.force_root_constituent to", hparams.force_root_constituent)
 
     hparams.mode = args.mode
+    hparams.stop_thresh = args.stop_thresh
     print("Initializing model...")
     parser = parse_chart.ChartParser(
         tag_vocab=tag_vocab,
@@ -315,6 +316,8 @@ def run_test(args):
     if args.no_predict_tags and parser.f_tag is not None:
         print("Removing part-of-speech tagging head...")
         parser.f_tag = None
+    if not hasattr(parser, "stop_thresh"):
+        parser.stop_thresh = args.stop_thresh
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():
@@ -382,6 +385,7 @@ def main():
     subparser.add_argument("--parallelize", action="store_true")
     subparser.add_argument("--print-vocabs", action="store_true")
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])
+    subparser.add_argument("--stop-thresh", type=float, default=0.0)
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)
@@ -395,6 +399,7 @@ def main():
     subparser.add_argument("--parallelize", action="store_true")
     subparser.add_argument("--output-path", default="")
     subparser.add_argument("--no-predict-tags", action="store_true")
+    subparser.add_argument("--stop-thresh", type=float, default=0.0)
 
     args = parser.parse_args()
     args.callback(args)

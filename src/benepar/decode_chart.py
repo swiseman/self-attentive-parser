@@ -245,7 +245,7 @@ class ChartDecoder:
             chart[:length, :length] for chart, length in zip(padded_charts, lengths)
         ]
 
-    def pants(self, scores, lengths):
+    def pants(self, scores, lengths, stop_thresh=0):
         scores = scores.detach()
         #scores = scores - scores[..., :1]
         if self.force_root_constituent:
@@ -261,31 +261,38 @@ class ChartDecoder:
         maxes[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
         maxes[(arng.view(-1, 1) >= arng).unsqueeze(0).expand(
             maxes.size())] = -float("inf")
-
-        stop_thresh = 0 # 
         srtd, srtidxs = maxes.view(bsz, -1).sort(axis=-1, descending=True)
-        nleft = lengths.clone()
+        #nleft = lengths.clone()
         outputs = []
         for b in range(bsz):
-            spans = []
-            for i in range(lengths[b].item()):
+            if lengths[b].item() == 1:
+                spans = np.array([[0, 1, 0]])
+                outputs.append(CompressedParserOutput(
+                    starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))
+                continue
+            spans, parsed = [], False
+            for i in range(srtidxs.size(1)):
                 flat_idx = srtidxs[b, i].item()
                 l = flat_idx // maxlen
                 r = flat_idx % maxlen + 1 # exclusive
-                if any((lp < l <= rp < r) or (l < lp <= r < rp)
+                if any((lp < l < rp < r) or (l < lp < r < rp)
                        for (lp, rp, _) in spans):
                     continue
                 spans.append((l, r, argmaxes[b, l, r-1].item()))
-                nleft[b] -= (r-l)
+                parsed = parsed or (l == 0 and r == lengths[b].item())
+                #nleft[b] -= (r-l)
                 # may want to keep going until everything compatible is taken???
-                if nleft[b].item() <= 0 and srtd[b, i+1].item() < stop_thresh:
-                    # add diagonal
-                    spans.extend([(i, i+1, 1) for i in range(lengths[b].item())])
-                    spans.sort(key=lambda x: (-x[1], x[0])) # maybe better to sort in numpy?
-                    spans = np.array(spans) # first col is starts, then ends, then labels
-                    outputs.append(CompressedParserOutput(
-                        starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))
+                #if nleft[b].item() <= 0 and srtd[b, i+1].item() < stop_thresh:
+                if parsed and srtd[b, i+1].item() < stop_thresh:
                     break
+            # add diagonal
+            spans.extend([(j, j+1, 0) for j in range(lengths[b].item())])
+            #spans.sort(key=lambda x: (-x[1], x[0])) # maybe better to sort in numpy?
+            spans.sort(key=lambda x: (x[0], -x[1])) # note opposite order from numpy
+            spans = np.array(spans) # first col is starts, then ends, then labels
+            outputs.append(CompressedParserOutput(
+                starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))
+        assert len(outputs) == bsz
         return outputs
 
     def compressed_output_from_chart(self, chart):
