@@ -127,7 +127,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.LayerNorm(d_pretrained),
             #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
             nn.Linear(d_pretrained, len(label_vocab)),
-        )        
+        )
 
         if hparams.predict_tags:
             self.f_tag = nn.Sequential(
@@ -216,9 +216,11 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         if example.tree is not None:
             if self.mode == "bce":
                 encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
+            elif self.mode == "mlr":
+                encoded["span_labels"] = self.decoder.chart_from_tree3(example.tree)
             else:
                 encoded["span_labels"] = torch.tensor(
-                    self.decoder.chart_from_tree(example.tree, mode=self.mode)
+                    self.decoder.chart_from_tree(example.tree)
                 )
             if self.f_tag is not None:
                 encoded["tag_labels"] = torch.tensor(
@@ -513,7 +515,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 lengths = batch["valid_token_mask"].sum(-1) - 2
                 if self.mode == "bce":
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
-                        span_scores, lengths.to(span_scores.device))
+                        span_scores, lengths.to(span_scores.device), thresh=self.stop_thresh)
                 elif self.mode == "mlr":
                     charts_np = self.decoder.charts_from_pytorch_scores_batched3(
                          span_scores, lengths.to(span_scores.device))

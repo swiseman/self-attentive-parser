@@ -145,11 +145,11 @@ class ChartDecoder:
                     return False
         return True
 
-    def chart_from_tree(self, tree, mode=None):
+    def chart_from_tree(self, tree):
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
         chart = np.full((num_words, num_words), -100, dtype=int)
-        chart = np.tril(chart, -1) if mode is None else np.tril(chart)
+        chart = np.tril(chart, -1)
         # Now all invalid entries are filled with -100, and valid entries with 0
         for start, end, label in spans:
             # Previously unseen unary chains can occur in the dev/test sets.
@@ -163,16 +163,35 @@ class ChartDecoder:
         import ipdb; ipdb.set_trace()
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
+        chart = torch.zeros(num_words, num_words, len(self.label_vocab))
+        chart[..., 0] = 1 # by default predict no span
         # -100s on the lower triangle, zeros elsewhere
-        #chart = torch.full((num_words, num_words), -100).tril(-1).unsqueeze(2).expand(
-        chart = torch.full((num_words, num_words), -100).tril().unsqueeze(2).expand(
-            num_words, num_words, len(self.label_vocab)).contiguous()
+        trilidxs = torch.tril_indices(num_words, num_words, offset=-1, device=chart.device)
+        chart[trilidxs[0], trilidxs[1]] = -100
+        # chart = torch.full((num_words, num_words), -100).tril(-1).unsqueeze(2).expand(
+        #     num_words, num_words, len(self.label_vocab)).contiguous()
         for start, end, label in spans:
             # Previously unseen unary chains can occur in the dev/test sets.
             # For now, we ignore them and don't mark the corresponding chart
             # entry as a constituent.
             if label in self.label_vocab:
                 chart[start, end, self.label_vocab[label]] = 1.0
+                chart[start, end, 0] = 0.0
+        return chart
+
+    def chart_from_tree3(self, tree):
+        spans = get_labeled_spans(tree)
+        num_words = len(tree.leaves())
+        chart = np.zeros(num_words, num_words, dtype=int)
+        trilidxs = torch.tril_indices(num_words, num_words, offset=-1, device=chart.device)
+        chart[trilidxs[0], trilidxs[1]] = -100
+        # Now all invalid entries are filled with -100, and valid entries with 0
+        for start, end, label in spans:
+            # Previously unseen unary chains can occur in the dev/test sets.
+            # For now, we ignore them and don't mark the corresponding chart
+            # entry as a constituent.
+            if label in self.label_vocab:
+                chart[start, end] = self.label_vocab[label]
         return chart
 
     def charts_from_pytorch_scores_batched(self, scores, lengths):
@@ -203,11 +222,10 @@ class ChartDecoder:
             chart[:length, :length] for chart, length in zip(padded_charts, lengths)
         ]
 
-    def charts_from_pytorch_scores_batched2(self, scores, lengths):
+    def charts_from_pytorch_scores_batched2(self, scores, lengths, thresh=0.0):
         # import ipdb; ipdb.set_trace()
         scores = scores.detach()
         #scores = scores - scores[..., :1]
-        thresh = 0.0 # just use a thresh for now
         if self.force_root_constituent:
             scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] = thresh - 1.0
 
@@ -216,7 +234,7 @@ class ChartDecoder:
         arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
         is_pad = arng >= lengths.view(-1, 1)
         scores[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
-        scores[(arng.view(-1, 1) >= arng).unsqueeze(0).unsqueeze(-1).expand(
+        scores[(arng.view(-1, 1) > arng).unsqueeze(0).unsqueeze(-1).expand(
             scores.size())] = -float("inf")
 
         # for now we'll take highest thing assuming it's higher than thresh?
@@ -239,7 +257,7 @@ class ChartDecoder:
         arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
         is_pad = arng >= lengths.view(-1, 1)
         argmaxes[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = 0
-        argmaxes[(arng.view(-1, 1) >= arng).unsqueeze(0).expand(argmaxes.size())] = 0
+        argmaxes[(arng.view(-1, 1) > arng).unsqueeze(0).expand(argmaxes.size())] = 0
 
         padded_charts = argmaxes.cpu().numpy()
         return [
