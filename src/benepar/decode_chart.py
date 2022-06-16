@@ -269,15 +269,13 @@ class ChartDecoder:
         if self.force_root_constituent:
             scores[torch.arange(scores.shape[0]), 0, lengths - 1, 0] -= 1.0 # made up
 
-        scores[..., 0] = -float("inf") # never pick a 0 label
         maxes, argmaxes = scores.max(-1) # bsz x T x T
-
         # get rid of padding and tril stuff
         bsz, maxlen, _ = maxes.size()
         arng = torch.arange(maxlen, device=lengths.device).view(1, -1)
         is_pad = arng >= lengths.view(-1, 1)
         maxes[is_pad.unsqueeze(2) | is_pad.unsqueeze(1)] = -float("inf")
-        maxes[(arng.view(-1, 1) >= arng).unsqueeze(0).expand(
+        maxes[(arng.view(-1, 1) > arng).unsqueeze(0).expand(
             maxes.size())] = -float("inf")
         srtd, srtidxs = maxes.view(bsz, -1).sort(axis=-1, descending=True)
         #nleft = lengths.clone()
@@ -288,25 +286,24 @@ class ChartDecoder:
                 outputs.append(CompressedParserOutput(
                     starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))
                 continue
-            spans, parsed = [], False
+            spans, parsed = {}, False
             for i in range(srtidxs.size(1)):
                 flat_idx = srtidxs[b, i].item()
                 l = flat_idx // maxlen
                 r = flat_idx % maxlen + 1 # exclusive
-                if any((lp < l < rp < r) or (l < lp < r < rp)
-                       for (lp, rp, _) in spans):
+                labe = argmaxes[b, l, r-1].item()
+                if labe == 0 or (any((lp < l < rp < r) or (l < lp < r < rp)
+                       for (lp, rp, _) in spans)):
                     continue
-                spans.append((l, r, argmaxes[b, l, r-1].item()))
+                spans[l, r] = labe
                 parsed = parsed or (l == 0 and r == lengths[b].item())
-                #nleft[b] -= (r-l)
-                # may want to keep going until everything compatible is taken???
-                #if nleft[b].item() <= 0 and srtd[b, i+1].item() < stop_thresh:
                 if parsed and srtd[b, i+1].item() < stop_thresh:
                     break
             # add diagonal
-            spans.extend([(j, j+1, 0) for j in range(lengths[b].item())])
+            spans.update({(j, j+1): 0 for j in range(lengths[b].item())
+                          if (j, j+1) not in spans})
             #spans.sort(key=lambda x: (-x[1], x[0])) # maybe better to sort in numpy?
-            spans.sort(key=lambda x: (x[0], -x[1])) # note opposite order from numpy
+            spans = sorted(spans.keys(), key=lambda x: (x[0], -x[1])) # NB opposite order from np
             spans = np.array(spans) # first col is starts, then ends, then labels
             outputs.append(CompressedParserOutput(
                 starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))

@@ -121,7 +121,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.Linear(hparams.d_label_hidden, len(label_vocab)),
         )
         """
-    
+
         self.f_label = nn.Sequential(
             nn.Linear(d_pretrained, d_pretrained),
             nn.GELU(),
@@ -129,7 +129,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
             nn.Linear(d_pretrained, len(label_vocab)),
         )
-        
+
 
         if hparams.predict_tags:
             self.f_tag = nn.Sequential(
@@ -432,7 +432,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             torch.unsqueeze(fencepost_annotations, 1)
             - torch.unsqueeze(fencepost_annotations, 2))[:, :-1, 1:]
         """
-        
+
         annotations = features
         annotations = annotations[:, 1:-1] # strip bos, eos
         bsz, T, annsz = annotations.size()
@@ -514,15 +514,16 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             else:
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
-                if self.mode == "bce":
+                if self.pants:
+                    # really a list of compressed outputs now.
+                    charts_np = self.decoder.pants(
+                       span_scores, lengths.to(span_scores.device), self.stop_thresh)
+                elif self.mode == "bce":
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
                         span_scores, lengths.to(span_scores.device), thresh=self.stop_thresh)
                 elif self.mode == "mlr":
                     charts_np = self.decoder.charts_from_pytorch_scores_batched3(
                          span_scores, lengths.to(span_scores.device))
-                    # really a list of compressed outputs now.
-                    #charts_np = self.decoder.pants(
-                    #    span_scores, lengths.to(span_scores.device), self.stop_thresh)
                 else:
                     charts_np = self.decoder.charts_from_pytorch_scores_batched(
                         span_scores, lengths.to(span_scores.device)
@@ -543,9 +544,9 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 if tag_ids_np is not None:
                     output = output.with_tags(tag_ids_np[i, 1 : example_len + 1])
                 yield output
-            #elif self.mode == "mlr":
-            #    leaves = examples[i].pos()
-            #    yield charts_np[i].to_tree(leaves, self.decoder.label_from_index)
+            elif self.pants:
+                leaves = examples[i].pos()
+                yield charts_np[i].to_tree(leaves, self.decoder.label_from_index)
             else:
                 if tag_scores is None:
                     leaves = examples[i].pos()

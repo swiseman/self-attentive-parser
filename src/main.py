@@ -145,7 +145,7 @@ def run_train(args, hparams):
             m.p = nudropp
     parser.apply(update_dropout)
 
-    
+
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():
@@ -166,7 +166,7 @@ def run_train(args, hparams):
     hparams.weight_decay = 0.0001
     hparams.learning_rate_warmup_steps = 160
     hparams.clip_grad_norm = 1.0
-    
+
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -187,7 +187,7 @@ def run_train(args, hparams):
         factor=hparams.step_decay_factor,
         patience=hparams.step_decay_patience * hparams.checks_per_epoch,
         verbose=True,)
-    
+
     #from transformers import get_constant_schedule_with_warmup
     #scheduler = get_constant_schedule_with_warmup(optimizer, hparams.learning_rate_warmup_steps)
     """
@@ -358,6 +358,8 @@ def run_test(args):
         parser.f_tag = None
     if not hasattr(parser, "stop_thresh"):
         parser.stop_thresh = args.stop_thresh
+    if not hasattr(parser, "pants"):
+        parser.pants = args.pants
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():
@@ -440,6 +442,7 @@ def main():
     subparser.add_argument("--output-path", default="")
     subparser.add_argument("--no-predict-tags", action="store_true")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
+    subparser.add_argument("--pants", action="store_true")
 
     args = parser.parse_args()
     args.callback(args)
