@@ -78,7 +78,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 )
             d_pretrained = self.pretrained_model.config.hidden_size
 
-            """
+            #"""
             if hparams.use_encoder:
                 self.project_pretrained = nn.Linear(
                     d_pretrained, hparams.d_model // 2, bias=False
@@ -87,7 +87,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 self.project_pretrained = nn.Linear(
                     d_pretrained, hparams.d_model, bias=False
                 )
-            """
+            #"""
 
         if hparams.use_encoder:
             self.morpho_emb_dropout = FeatureDropout(hparams.morpho_emb_dropout)
@@ -121,6 +121,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.Linear(hparams.d_label_hidden, len(label_vocab)),
         )
         """
+    
         self.f_label = nn.Sequential(
             nn.Linear(d_pretrained, d_pretrained),
             nn.GELU(),
@@ -128,6 +129,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
             nn.Linear(d_pretrained, len(label_vocab)),
         )
+        
 
         if hparams.predict_tags:
             self.f_tag = nn.Sequential(
@@ -217,7 +219,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             if self.mode == "bce":
                 encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
             elif self.mode == "mlr":
-                encoded["span_labels"] = self.decoder.chart_from_tree3(example.tree)
+                encoded["span_labels"] = torch.tensor(
+                    self.decoder.chart_from_tree3(example.tree))
             else:
                 encoded["span_labels"] = torch.tensor(
                     self.decoder.chart_from_tree(example.tree)
@@ -419,18 +422,9 @@ class ChartParser(nn.Module, parse_base.BaseParser):
 
         """
         annotations = self.project_pretrained(features)
-        """
-        annotations = features
-
-        if self.f_tag is not None:
-            tag_scores = self.f_tag(annotations)
-        else:
-            tag_scores = None
-
-        """
         fencepost_annotations = torch.cat(
-            [annotations[:, :-1, : self.d_model // 2],
-             annotations[:, 1:, self.d_model // 2 :],], -1,)
+            [annotations[:, :-1, : halfsz],
+             annotations[:, 1:, halfsz :],], -1,)
 
         # Note that the bias added to the final layer norm is useless because
         # this subtraction gets rid of it
@@ -438,10 +432,17 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             torch.unsqueeze(fencepost_annotations, 1)
             - torch.unsqueeze(fencepost_annotations, 2))[:, :-1, 1:]
         """
-
+        
+        annotations = features
         annotations = annotations[:, 1:-1] # strip bos, eos
         bsz, T, annsz = annotations.size()
         halfsz = annsz // 2
+
+        if self.f_tag is not None:
+            tag_scores = self.f_tag(annotations)
+        else:
+            tag_scores = None
+
         span_features = torch.cat( # bsz x T x T x dim
             [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
              annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)

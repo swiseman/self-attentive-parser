@@ -16,7 +16,6 @@ import evaluate
 import learning_rates
 import treebanks
 
-
 def format_elapsed(start_time):
     elapsed_time = int(time.time() - start_time)
     minutes, seconds = divmod(elapsed_time, 60)
@@ -139,6 +138,14 @@ def run_train(args, hparams):
         char_vocab=char_vocab,
         hparams=hparams,
     )
+
+    nudropp = 0.1
+    def update_dropout(m):
+        if type(m) == torch.nn.Dropout:
+            m.p = nudropp
+    parser.apply(update_dropout)
+
+    
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():
@@ -179,8 +186,18 @@ def run_train(args, hparams):
         mode="max",
         factor=hparams.step_decay_factor,
         patience=hparams.step_decay_patience * hparams.checks_per_epoch,
-        verbose=True,
-    )
+        verbose=True,)
+    
+    #from transformers import get_constant_schedule_with_warmup
+    #scheduler = get_constant_schedule_with_warmup(optimizer, hparams.learning_rate_warmup_steps)
+    """
+    def lr_lambda(current_step):
+        if current_step < hparams.learning_rate_warmup_steps:
+            lr_step = (hparams.learning_rate - 1e-7)/hparams.learning_rate_warmup_steps
+            return (1e-7 + current_step*lr_step)/hparams.learning_rate
+        return hparams.learning_rate_warmup_steps**0.5 * current_step**-0.5
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    """
 
     #clippable_parameters = trainable_parameters
     #grad_clip_threshold = (
@@ -282,6 +299,7 @@ def run_train(args, hparams):
 
             optimizer.step()
 
+            """
             print(
                 "epoch {:,} "
                 "batch {:,}/{:,} "
@@ -300,11 +318,13 @@ def run_train(args, hparams):
                     format_elapsed(start_time),
                 )
             )
+            """
 
             if current_processed >= check_every:
                 current_processed -= check_every
                 check_dev()
                 scheduler.step(metrics=best_dev_fscore)
+                #scheduler.step()
             else:
                 scheduler.step()
 

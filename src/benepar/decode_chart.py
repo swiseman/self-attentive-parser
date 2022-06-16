@@ -160,7 +160,6 @@ class ChartDecoder:
         return chart
 
     def chart_from_tree2(self, tree):
-        import ipdb; ipdb.set_trace()
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
         chart = torch.zeros(num_words, num_words, len(self.label_vocab))
@@ -182,9 +181,9 @@ class ChartDecoder:
     def chart_from_tree3(self, tree):
         spans = get_labeled_spans(tree)
         num_words = len(tree.leaves())
-        chart = np.zeros(num_words, num_words, dtype=int)
-        trilidxs = torch.tril_indices(num_words, num_words, offset=-1, device=chart.device)
-        chart[trilidxs[0], trilidxs[1]] = -100
+        chart = np.zeros((num_words, num_words), dtype=int)
+        trilidxs = np.tril_indices(num_words, k=-1)
+        chart[trilidxs] = -100
         # Now all invalid entries are filled with -100, and valid entries with 0
         for start, end, label in spans:
             # Previously unseen unary chains can occur in the dev/test sets.
