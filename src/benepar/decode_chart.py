@@ -114,6 +114,28 @@ def uncollapse_unary(tree, ensure_top=False):
             children = [nltk.tree.Tree(label, children)]
         return children[0]
 
+    # based on nltk's _pformat_flat
+    def my_pformat_flat(tree, parens="()", closing_label=True, dummy_word="X"):
+        nodesep, quotes = "", False
+        childstrs = []
+        for child in tree:
+            if isinstance(child, nltk.tree.Tree):
+                childstrs.append(my_pformat_flat(child, parens, closing_label, dummy_word))
+            elif isinstance(child, tuple):
+                childstrs.append("/".join(child))
+            elif isinstance(child, str) and not quotes:
+                childwrd = dummy_word if dummy_word is not None else child
+                childstrs.append("%s" % childwrd)
+            else:
+                childstrs.append(repr(child))
+        if isinstance(tree._label, str):
+            closelabel = tree._label if closing_label else ""
+            return "{}{}{} {} {}{}".format(
+                parens[0], tree._label, nodesep, " ".join(childstrs), closelabel, parens[1])
+        closelabel = repr(tree._label) if closing_label else ""
+        return "{}{}{} {} {}{}".format(
+            parens[0], repr(tree._label), nodesep, " ".join(childstrs), closelabel, parens[1])
+
 
 class ChartDecoder:
     """A chart decoder for parsing formulated as span classification."""
