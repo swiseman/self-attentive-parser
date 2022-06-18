@@ -166,6 +166,7 @@ def run_train(args, hparams):
     hparams.weight_decay = 0.0001
     hparams.learning_rate_warmup_steps = 160
     hparams.clip_grad_norm = 1.0
+    #hparams.batch_size = 64
 
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
@@ -356,10 +357,8 @@ def run_test(args):
     if args.no_predict_tags and parser.f_tag is not None:
         print("Removing part-of-speech tagging head...")
         parser.f_tag = None
-    if not hasattr(parser, "stop_thresh"):
-        parser.stop_thresh = args.stop_thresh
-    if not hasattr(parser, "pants"):
-        parser.pants = args.pants
+    parser.stop_thresh = args.stop_thresh
+    parser.pants = args.pants
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():

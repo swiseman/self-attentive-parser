@@ -292,18 +292,23 @@ class ChartDecoder:
                 l = flat_idx // maxlen
                 r = flat_idx % maxlen + 1 # exclusive
                 labe = argmaxes[b, l, r-1].item()
-                if labe == 0 or (any((lp < l < rp < r) or (l < lp < r < rp)
-                       for (lp, rp, _) in spans)):
+                if (labe == 0 or l >= lengths[b].item() or r > lengths[b].item()
+                    or (any((lp < l < rp < r) or (l < lp < r < rp)
+                       for (lp, rp) in spans))):
                     continue
-                spans[l, r] = labe
+                if srtd[b, i].item() > -float("inf"): # can sometimes continue until padding
+                    spans[l, r] = labe
                 parsed = parsed or (l == 0 and r == lengths[b].item())
-                if parsed and srtd[b, i+1].item() < stop_thresh:
+                if parsed and i < srtidxs.size(1)-1 and srtd[b, i+1].item() < stop_thresh:
                     break
+            #if not parsed:
+            #    import ipdb; ipdb.set_trace()
             # add diagonal
             spans.update({(j, j+1): 0 for j in range(lengths[b].item())
                           if (j, j+1) not in spans})
             #spans.sort(key=lambda x: (-x[1], x[0])) # maybe better to sort in numpy?
-            spans = sorted(spans.keys(), key=lambda x: (x[0], -x[1])) # NB opposite order from np
+            spans = sorted([k + (v,) for k, v in spans.items()],
+                           key=lambda x: (x[0], -x[1])) # NB opposite order from np
             spans = np.array(spans) # first col is starts, then ends, then labels
             outputs.append(CompressedParserOutput(
                 starts=spans[:, 0], ends=spans[:, 1], labels=spans[:, 2]))

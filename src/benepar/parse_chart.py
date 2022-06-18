@@ -514,7 +514,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             else:
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
-                if self.pants:
+                if hasattr(self, "pants") and self.pants:
                     # really a list of compressed outputs now.
                     charts_np = self.decoder.pants(
                        span_scores, lengths.to(span_scores.device), self.stop_thresh)
@@ -544,8 +544,16 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 if tag_ids_np is not None:
                     output = output.with_tags(tag_ids_np[i, 1 : example_len + 1])
                 yield output
-            elif self.pants:
+            elif hasattr(self, "pants") and self.pants:
                 leaves = examples[i].pos()
+                """
+                print(leaves)
+                print(charts_np[i])
+                nug = charts_np[i].to_tree(leaves, self.decoder.label_from_index)
+                if len(leaves) != len(list(nug.leaves())):
+                    import ipdb; ipdb.set_trace()
+                yield nug
+                """
                 yield charts_np[i].to_tree(leaves, self.decoder.label_from_index)
             else:
                 if tag_scores is None:
