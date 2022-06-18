@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 # from benepar import char_lstm
-# from benepar import decode_chart
+from benepar import decode_chart
 from benepar import nkutil
 # from benepar import parse_chart
 import evaluate
@@ -70,6 +70,7 @@ def make_hparams():
         tag_loss_scale=5.0,
         dummy_word=None,
         closing_label=True,
+        add_label_tokens=True,
     )
 
 
@@ -134,6 +135,7 @@ def run_train(args, hparams):
 
     print("Initializing model...")
     parser = seq2seq.Seq2seqParser(label_vocab=label_vocab, hparams=hparams)
+    parser.retokenizer.tokenizer.model_max_length = 1024 # just in case
 
     # nudropp = 0.1
     # def update_dropout(m):
@@ -268,6 +270,7 @@ def run_train(args, hparams):
     )
     for epoch in itertools.count(start=1):
         epoch_start_time = time.time()
+        nsubbatches = 0
 
         for batch_num, batch in enumerate(data_loader, start=1):
             optimizer.zero_grad()
@@ -275,10 +278,10 @@ def run_train(args, hparams):
 
             batch_loss_value = 0.0
             for subbatch_size, subbatch in batch:
-                if args.mode:
-                    loss = parser.compute_loss2(subbatch)
-                else:
-                    loss = parser.compute_loss(subbatch)
+                #if args.mode:
+                #    loss = parser.compute_loss2(subbatch)
+                #else:
+                loss = parser.compute_loss(subbatch)
                 loss_value = float(loss.data.cpu().numpy())
                 batch_loss_value += loss_value
                 if loss_value > 0:
@@ -286,6 +289,7 @@ def run_train(args, hparams):
                 del loss
                 total_processed += subbatch_size
                 current_processed += subbatch_size
+                nsubbatches += 1
 
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 #clippable_parameters, grad_clip_threshold
@@ -294,26 +298,25 @@ def run_train(args, hparams):
 
             optimizer.step()
 
-            """
-            print(
-                "epoch {:,} "
-                "batch {:,}/{:,} "
-                "processed {:,} "
-                "batch-loss {:.4f} "
-                "grad-norm {:.4f} "
-                "epoch-elapsed {} "
-                "total-elapsed {}".format(
-                    epoch,
-                    batch_num,
-                    int(np.ceil(len(train_treebank) / hparams.batch_size)),
-                    total_processed,
-                    batch_loss_value,
-                    grad_norm,
-                    format_elapsed(epoch_start_time),
-                    format_elapsed(start_time),
+            if (batch_num+1) % 20 == 0:
+                print(
+                    "epoch {:,} "
+                    "batch {:,}/{:,} "
+                    "processed {:,} "
+                    "batch-loss {:.4f} "
+                    "grad-norm {:.4f} "
+                    "epoch-elapsed {} "
+                    "total-elapsed {}".format(
+                        epoch,
+                        batch_num,
+                        int(np.ceil(len(train_treebank) / hparams.batch_size)),
+                        total_processed,
+                        batch_loss_value/nsubbatches,
+                        grad_norm,
+                        format_elapsed(epoch_start_time),
+                        format_elapsed(start_time),
+                    )
                 )
-            )
-            """
 
             if current_processed >= check_every:
                 current_processed -= check_every

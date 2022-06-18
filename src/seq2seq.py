@@ -3,7 +3,10 @@ import torch
 import torch.nn as nn
 import nltk
 
-from transformers import EncoderDecoderModel, AutoTokenizer, AutoModel, AutoConfig
+from transformers import AutoTokenizer, AutoModel, AutoConfig, T5ForConditionalGeneration
+#from transformers.utils import PaddingStrategy
+#from transformers.tokenization_utils import TruncationStrategy
+from torch.nn.utils.rnn import pad_sequence
 
 from benepar import retokenization, decode_chart, nkutil, subbatching
 
@@ -13,7 +16,9 @@ class Seq2seqParser(nn.Module):
         self.label_vocab = label_vocab
         self.retokenizer = self.retokenizer = retokenization.Retokenizer(
             hparams.pretrained_model, retain_start_stop=True)
+        """
         if "bert" in hparams.pretrained_model:
+            assert False
             tokenizer = self.retokenizer.tokenizer
             model = EncoderDecoderModel.from_encoder_decoder_pretrained(
                 hparams.pretrained_model, hparams.pretrained_model)
@@ -22,11 +27,18 @@ class Seq2seqParser(nn.Module):
             model.config.vocab_size = model.config.decoder.vocab_size
             self.pretrained_model = model
         else:
-            self.pretrained_model = AutoModel.from_config(
-                AutoConfig.from_pretrained(hparams.pretrained_model))
+        """
+        #self.pretrained_model = AutoModel.from_config(
+        #    AutoConfig.from_pretrained(hparams.pretrained_model))
+        self.pretrained_model = T5ForConditionalGeneration.from_pretrained(hparams.pretrained_model)
         # self.chart_decoder = decode_chart.ChartDecoder(
         #     label_vocab=self.label_vocab, force_root_constituent=hparams.force_root_constituent)
         self.closing_label, self.dummy_word = hparams.closing_label, hparams.dummy_word
+        if hparams.add_label_tokens:
+            voc = self.retokenizer.tokenizer.vocab
+            self.retokenizer.tokenizer.add_tokens(
+                [k for k in self.label_vocab.keys() if k not in voc])
+            self.pretrained_model.resize_token_embeddings(len(self.retokenizer.tokenizer))
 
     @classmethod
     def from_trained(cls, model_path):
@@ -62,15 +74,30 @@ class Seq2seqParser(nn.Module):
             tree = decode_chart.collapse_unary_strip_pos(example.tree)
             lintree = decode_chart.my_pformat_flat(
                 tree, closing_label=self.closing_label, dummy_word=self.dummy_word)
-            lintokes = self.retokenizer(lintree, example.space_after)
-            encoded["labels"] = lintokes
+            treetokes = self.retokenizer.tokenizer(lintree.split(), is_split_into_words=True)
+            #encoded['decoder_input_ids'] = treetokes['input_ids']
+            #encoded['decoder_attention_mask'] = treetokes['attention_mask']
+            encoded["labels"] = treetokes['input_ids']
             #self.chart_decoder.chart_from_tree(example.tree)
         return encoded
 
     def pad_encoded(self, encoded_batch):
-        batch = self.retokenizer.pad(
-            [{k: v for k, v in example.items()} for example in encoded_batch],
-            return_tensors="pt")
+        #batch = self.retokenizer.pad(
+        #    [{k: v for k, v in example.items()} for example in encoded_batch],
+        #    return_tensors="pt")
+        #batch = self.retokenizer.tokenizer.pad(
+        #    [{k: v for k, v in example.items() if k != 'words_from_tokens'}
+        #     for example in encoded_batch],
+        #    return_tensors="pt")
+        batch = {k: pad_sequence(
+            [torch.LongTensor(example[k]) for example in encoded_batch], batch_first=True,
+            padding_value=self.retokenizer.tokenizer.pad_token_id)
+                 for k in encoded_batch[0].keys() if k not in ['labels', 'words_from_tokens']}
+        if 'labels' in encoded_batch[0]:
+            # labels needs a different pad token
+            batch['labels'] = pad_sequence(
+                [torch.LongTensor(example['labels']) for example in encoded_batch], batch_first=True,
+                padding_value=-100)
         return batch
 
     def _get_lens(self, encoded_batch):
@@ -93,24 +120,32 @@ class Seq2seqParser(nn.Module):
         return res
 
     def forward(self, batch):
-        valid_token_mask = batch["valid_token_mask"].to(self.output_device)
-        loss, logits = self.pretrained_model(*batch) # averages?
-
-    def compute_loss(self, batch):
-        loss, _ = self(batch)
+        #valid_token_mask = batch["valid_token_mask"].to(self.output_device)
+        # for some reason we don't do device stuff in main
+        device = self.pretrained_model.lm_head.weight.device
+        dec_attn_mask = (batch['labels'] != self.retokenizer.tokenizer.pad_token_id).to(
+            batch['attention_mask'].dtype).to(device)
+        loss = self.pretrained_model(
+            input_ids=batch['input_ids'].to(device), attention_mask=batch['attention_mask'].to(device),
+            decoder_attention_mask=dec_attn_mask.to(device), labels=batch['labels'].to(device)).loss # averages?
         return loss
 
+    def compute_loss(self, batch):
+        return self(batch)
+
     def _parse_encoded(self, examples, encoded):
+        import ipdb; ipdb.set_trace()
+        device = self.pretrained_model.lm_head.weight.device
         with torch.no_grad():
             batch = self.pad_encoded(encoded)
-            gens = self.pretrained_model.generate(batch['input_ids'])
+            gens = self.pretrained_model.generate(batch['input_ids'].to(device))
             gens = self.retokenizer.tokenizer.decode(gens)
             if self.closing_label:
                 # maybe try to turn them into trees
                 for thing in self.label_vocab:
                     closep = thing + ")"
                     for g, gen in enumerate(gens):
-                         gens[g] = gen.replace(closep, ")")
+                        gens[g] = gen.replace(closep, ")")
             for g, gen in enumerate(gens):
                 gens[g] = nltk.tree.Tree.fromstring(gen)
 
@@ -128,11 +163,9 @@ class Seq2seqParser(nn.Module):
         if subbatch_max_tokens is not None:
             res = subbatching.map(
                 self._parse_encoded, examples, encoded, costs=self._get_lens(encoded),
-                max_cost=subbatch_max_tokens, return_compressed=return_compressed,
-                return_scores=return_scores, return_amax=return_amax)
+                max_cost=subbatch_max_tokens)
         else:
-            res = self._parse_encoded(examples, encoded, return_compressed=return_compressed,
-                                      return_scores=return_scores)
+            res = self._parse_encoded(examples, encoded)
             res = list(res)
         self.train(training)
         return res
