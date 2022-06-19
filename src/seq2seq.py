@@ -13,6 +13,13 @@ from benepar import retokenization, decode_chart, nkutil, subbatching
 class Seq2seqParser(nn.Module):
     def __init__(self, label_vocab, hparams, pretrained_model_path=None):
         super().__init__()
+        # don't really know what this does
+        self.config = locals()
+        self.config.pop("self")
+        self.config.pop("__class__")
+        self.config.pop("pretrained_model_path")
+        self.config["hparams"] = hparams.to_dict()
+
         self.label_vocab = label_vocab
         self.retokenizer = self.retokenizer = retokenization.Retokenizer(
             hparams.pretrained_model, retain_start_stop=True)
@@ -31,16 +38,20 @@ class Seq2seqParser(nn.Module):
         #self.pretrained_model = AutoModel.from_config(
         #    AutoConfig.from_pretrained(hparams.pretrained_model))
         self.pretrained_model = T5ForConditionalGeneration.from_pretrained(hparams.pretrained_model)
-        # self.chart_decoder = decode_chart.ChartDecoder(
-        #     label_vocab=self.label_vocab, force_root_constituent=hparams.force_root_constituent)
-        self.closing_label, self.dummy_word = hparams.closing_label, hparams.dummy_word
+        self.chart_decoder = decode_chart.ChartDecoder(
+             label_vocab=self.label_vocab, force_root_constituent=hparams.force_root_constituent)
+        self.closing_label = hparams.closing_label
+        self.dummy_word = hparams.dummy_word if hparams.dummy_word else None
         voc = self.retokenizer.tokenizer.vocab
         if hparams.add_label_tokens:
             self.retokenizer.tokenizer.add_tokens(
                 [k for k in self.label_vocab.keys() if k not in voc])
             self.pretrained_model.resize_token_embeddings(len(self.retokenizer.tokenizer))
         self.w2i = self.retokenizer.tokenizer.vocab # i think it changed???
-        self.i2w = {i: w for w, i in self.w2i.items()}
+        #self.i2w = {i: w for w, i in self.w2i.items()}
+        self.consearch = hparams.consearch
+        self.beam_size = hparams.beam_size
+        self.lenmult = hparams.lenmult
 
     @classmethod
     def from_trained(cls, model_path):
@@ -95,11 +106,11 @@ class Seq2seqParser(nn.Module):
             [torch.LongTensor(example[k]) for example in encoded_batch], batch_first=True,
             padding_value=self.retokenizer.tokenizer.pad_token_id)
                  for k in encoded_batch[0].keys() if k not in ['labels', 'words_from_tokens']}
-        if 'labels' in encoded_batch[0]:
-            # labels needs a different pad token
-            batch['labels'] = pad_sequence(
-                [torch.LongTensor(example['labels']) for example in encoded_batch],
-                batch_first=True, padding_value=-100)
+        for key in ['labels', 'words_from_tokens']: # these need a different pad token
+           if key in encoded_batch[0]:
+               batch[key] = pad_sequence(
+                   [torch.LongTensor(example[key]) for example in encoded_batch],
+                   batch_first=True, padding_value=-100)
         return batch
 
     def _get_lens(self, encoded_batch):
@@ -137,19 +148,20 @@ class Seq2seqParser(nn.Module):
         return self(batch)
 
     # this is gonna be slower than necessary, but annoying to much w/ beam search too much
-    def bs_allowed_types(self, input_ids, pfx, labes):
+    def bs_allowed_types(self, input_ids, pfx, wlen, labes):
         op, cp = self.w2i['▁('], self.w2i[')']
-        dummy = self.w2i['▁X'] # CHECK!
+        dummy = self.w2i['▁' + self.dummy_word] if self.dummy_word is not None else None # CHECK!
         eos = self.retokenizer.tokenizer.eos_token_id
+        if pfx.size(0) == 0:
+            return [op]
         last = pfx[-1].item()
         if last == op: # open parenth; just labels are allowed
             return list(labes)
-        # if it's a label not following an open parenth, a close parenth is next
-        if (self.closing_label and last in labes
-            and pfx.size(0) > 1 and pfx[-2].item() != op):
-            return [cp]
+        if self.closing_label and last == cp:
+            return list(labes)
         # otherwise, we can either predict the next word, an open parenth, or a label
         srcidx, nopen, nclosed = 0, 0, 0
+        # could also track whether we're closing labeled parenths correctly...
         for toke in pfx:
             if ((self.dummy_word is None and toke.item() == input_ids[srcidx].item())
                 or (self.dummy_word is not None and toke.item() == dummy)):
@@ -160,50 +172,73 @@ class Seq2seqParser(nn.Module):
                 nclosed += 1
         # if we've covered all tokens can only end constituents/the generation
         if input_ids[srcidx].item() == eos:
-            if self.closing_label and nopen > nclosed:
-                return list(labes)
             if nopen > nclosed:
                 return [cp]
             if nopen == nclosed:
                 return [eos]
         # otherwise, we can emit the next word, or open or close parentheses
+        max_o_perwrd = 2 # how many ops per toke?
         allowed = [input_ids[srcidx].item()]
-        if self.closing_label:
-            allowed.extend(labes)
-        elif nopen > nclosed:
+        if nopen > nclosed + 1: # otherwise need a label
             allowed.append(cp)
-        allowed.append(op)
+        if nopen < wlen*max_o_perwrd:    
+            allowed.append(op)
         return allowed
 
     def _parse_encoded(self, examples, encoded):
-        #import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         device = self.pretrained_model.lm_head.weight.device
-        labes = set(self.w2i[nt] for nt in self.label_vocab)
+        labes = set(self.w2i[nt] for nt in self.label_vocab if nt != '')
         with torch.no_grad():
             batch = self.pad_encoded(encoded)
-
+            lengths = (batch["words_from_tokens"] != -100).sum(-1) - 1
+            wrdmult = self.lenmult
             def allowed_types(bidx, pfx):
                 if pfx[0] == self.retokenizer.tokenizer.pad_token_id:
                     pfx = pfx[1:]
-                return self.bs_allowed_types(batch['input_ids'][bidx], pfx, labes)
+                return self.bs_allowed_types(batch['input_ids'][bidx], pfx, lengths[bidx].item(), labes)
 
+            allowed_fn = allowed_types if self.consearch else None
             gens = self.pretrained_model.generate(
                 batch['input_ids'].to(device), num_beams=self.beam_size,
-                prefix_allowed_tokens_fn=allowed_types)
+                prefix_allowed_tokens_fn=allowed_fn,
+                max_length=int(lengths.max().item()*wrdmult))
 
+        #import ipdb; ipdb.set_trace()
         for i in range(len(encoded)):
-            gen = self.retokenizer.tokenizer.decode(gens[i], skip_special_tokens=True)
-            if self.closing_label:
-                # maybe try to turn them into trees
-                for thing in self.label_vocab:
-                    closep = thing + ")"
-                    gen = gen.replace(closep, ")")
-            gentree = nltk.tree.Tree.fromstring(gen)
+            if self.closing_label: # remove labels after close parenths
+                gen = [toke.item() for t, toke in enumerate(gens[i])
+                       if t == 0 or gens[i,t-1].item() != self.w2i[')']]
+            else:
+                gen = gens[i]
+            gen = self.retokenizer.tokenizer.decode(gen, skip_special_tokens=True)
+            truleaves = examples[i].leaves()
+            try:
+                gentree = nltk.tree.Tree.fromstring(gen)
+            except ValueError: # still messed up, make a simple tree
+                #import ipdb; ipdb.set_trace()
+                gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
+            if gentree.leaves() != truleaves:
+                gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
             if self.dummy_word is not None:
-                leaves = examples[i].pos()
+                leaves = examples[i].leaves() #examples[i].pos()
                 for t, poz in enumerate(gentree.treepositions('leaves')):
                     gentree[poz] = leaves[t]
-            yield gentree
+            # i think we now need to do all the stuff they do so we can eval
+            # first add dummy poses so we can use their utilities.
+            nopostree = gentree.copy()
+            for poz in gentree.treepositions('leaves'):
+                gentree[poz] = nltk.tree.Tree("POS", [nopostree[poz]])
+            if len(gentree) == 1 and not isinstance(gentree[0], str):
+                gentree = nltk.tree.Tree("TOP", [gentree]) # otherwise root doesn't get collapsed
+            #try:
+            chart = self.chart_decoder.chart_from_tree(gentree)
+            #except AssertionError:
+            #    import ipdb; ipdb.set_trace()
+            chart[chart == -100] = 0
+            poses = examples[i].pos()
+            co = self.chart_decoder.compressed_output_from_chart(chart)
+            yield co.to_tree(poses, self.chart_decoder.label_from_index)
             #yield self.decoder.tree_from_chart(charts_np[i], leaves=leaves)
 
     def parse(self, examples, subbatch_max_tokens=None):

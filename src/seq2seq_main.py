@@ -68,9 +68,12 @@ def make_hparams():
         d_label_hidden=256,
         d_tag_hidden=256,
         tag_loss_scale=5.0,
-        dummy_word=None,
+        dummy_word='',
         closing_label=True,
         add_label_tokens=True,
+        beam_size = 4,
+        lenmult = 8,
+        consearch = False,
     )
 
 
@@ -268,6 +271,22 @@ def run_train(args, hparams):
             subbatch_max_tokens=args.subbatch_max_tokens,
         ),
     )
+
+    """
+    facmax = 0
+    for batch_num, batch in enumerate(data_loader, start=1):
+        for subbatch_size, subbatch in batch:
+            lengths = (subbatch["words_from_tokens"] != -100).sum(-1) - 1
+            tlengths = (subbatch["labels"] != -100).sum(-1) - 1
+            #tlengths = (subbatch["labels"] == parser.w2i['▁(']).sum(-1)
+            fac = tlengths.float() / lengths.float()
+            if fac.max().item() > facmax:
+                facmax = fac.max().item()
+    print("facmax", facmax)
+    assert False
+    """
+    # import ipdb; ipdb.set_trace()
+
     for epoch in itertools.count(start=1):
         epoch_start_time = time.time()
         nsubbatches = 0
@@ -298,7 +317,7 @@ def run_train(args, hparams):
 
             optimizer.step()
 
-            if (batch_num+1) % 20 == 0:
+            if (batch_num+1) % 100 == 0:
                 print(
                     "epoch {:,} "
                     "batch {:,}/{:,} "
@@ -419,7 +438,7 @@ def main():
     subparser.add_argument("--dev-path", default="data/wsj/dev_22.LDC99T42")
     subparser.add_argument("--dev-path-text", type=str)
     subparser.add_argument("--text-processing", default="default")
-    subparser.add_argument("--subbatch-max-tokens", type=int, default=2000)
+    subparser.add_argument("--subbatch-max-tokens", type=int, default=1000)
     subparser.add_argument("--parallelize", action="store_true")
     subparser.add_argument("--print-vocabs", action="store_true")
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])

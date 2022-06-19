@@ -115,7 +115,7 @@ def uncollapse_unary(tree, ensure_top=False):
         return children[0]
 
 # based on nltk's _pformat_flat
-def my_pformat_flat(tree, parens="()", closing_label=True, dummy_word="X"):
+def my_pformat_flat(tree, parens="()", closing_label=True, dummy_word="▁word"):
     nodesep, quotes = "", False
     childstrs = []
     for child in tree:
@@ -131,10 +131,10 @@ def my_pformat_flat(tree, parens="()", closing_label=True, dummy_word="X"):
     if isinstance(tree._label, str):
         closelabel = tree._label if closing_label else ""
         return "{}{}{} {} {}{}".format(
-            parens[0], tree._label, nodesep, " ".join(childstrs), closelabel, parens[1])
+            parens[0], tree._label, nodesep, " ".join(childstrs), parens[1], closelabel)
     closelabel = repr(tree._label) if closing_label else ""
     return "{}{}{} {} {}{}".format(
-        parens[0], repr(tree._label), nodesep, " ".join(childstrs), closelabel, parens[1])
+        parens[0], repr(tree._label), nodesep, " ".join(childstrs), parens[1], closelabel)
 
 
 class ChartDecoder:
