@@ -34,11 +34,13 @@ class Seq2seqParser(nn.Module):
         # self.chart_decoder = decode_chart.ChartDecoder(
         #     label_vocab=self.label_vocab, force_root_constituent=hparams.force_root_constituent)
         self.closing_label, self.dummy_word = hparams.closing_label, hparams.dummy_word
+        voc = self.retokenizer.tokenizer.vocab
         if hparams.add_label_tokens:
-            voc = self.retokenizer.tokenizer.vocab
             self.retokenizer.tokenizer.add_tokens(
                 [k for k in self.label_vocab.keys() if k not in voc])
             self.pretrained_model.resize_token_embeddings(len(self.retokenizer.tokenizer))
+        self.w2i = self.retokenizer.tokenizer.vocab # i think it changed???
+        self.i2w = {i: w for w, i in self.w2i.items()}
 
     @classmethod
     def from_trained(cls, model_path):
@@ -96,8 +98,8 @@ class Seq2seqParser(nn.Module):
         if 'labels' in encoded_batch[0]:
             # labels needs a different pad token
             batch['labels'] = pad_sequence(
-                [torch.LongTensor(example['labels']) for example in encoded_batch], batch_first=True,
-                padding_value=-100)
+                [torch.LongTensor(example['labels']) for example in encoded_batch],
+                batch_first=True, padding_value=-100)
         return batch
 
     def _get_lens(self, encoded_batch):
@@ -125,35 +127,83 @@ class Seq2seqParser(nn.Module):
         device = self.pretrained_model.lm_head.weight.device
         dec_attn_mask = (batch['labels'] != self.retokenizer.tokenizer.pad_token_id).to(
             batch['attention_mask'].dtype).to(device)
-        loss = self.pretrained_model(
-            input_ids=batch['input_ids'].to(device), attention_mask=batch['attention_mask'].to(device),
-            decoder_attention_mask=dec_attn_mask.to(device), labels=batch['labels'].to(device)).loss # averages?
-        return loss
+        return self.pretrained_model(
+            input_ids=batch['input_ids'].to(device),
+            attention_mask=batch['attention_mask'].to(device),
+            decoder_attention_mask=dec_attn_mask.to(device),
+            labels=batch['labels'].to(device)).loss # averages over tokens
 
     def compute_loss(self, batch):
         return self(batch)
 
+    # this is gonna be slower than necessary, but annoying to much w/ beam search too much
+    def bs_allowed_types(self, input_ids, pfx, labes):
+        op, cp = self.w2i['▁('], self.w2i[')']
+        dummy = self.w2i['▁X'] # CHECK!
+        eos = self.retokenizer.tokenizer.eos_token_id
+        last = pfx[-1].item()
+        if last == op: # open parenth; just labels are allowed
+            return list(labes)
+        # if it's a label not following an open parenth, a close parenth is next
+        if (self.closing_label and last in labes
+            and pfx.size(0) > 1 and pfx[-2].item() != op):
+            return [cp]
+        # otherwise, we can either predict the next word, an open parenth, or a label
+        srcidx, nopen, nclosed = 0, 0, 0
+        for toke in pfx:
+            if ((self.dummy_word is None and toke.item() == input_ids[srcidx].item())
+                or (self.dummy_word is not None and toke.item() == dummy)):
+                srcidx += 1
+            elif toke.item() == op:
+                nopen += 1
+            elif toke.item() == cp:
+                nclosed += 1
+        # if we've covered all tokens can only end constituents/the generation
+        if input_ids[srcidx].item() == eos:
+            if self.closing_label and nopen > nclosed:
+                return list(labes)
+            if nopen > nclosed:
+                return [cp]
+            if nopen == nclosed:
+                return [eos]
+        # otherwise, we can emit the next word, or open or close parentheses
+        allowed = [input_ids[srcidx].item()]
+        if self.closing_label:
+            allowed.extend(labes)
+        elif nopen > nclosed:
+            allowed.append(cp)
+        allowed.append(op)
+        return allowed
+
     def _parse_encoded(self, examples, encoded):
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         device = self.pretrained_model.lm_head.weight.device
+        labes = set(self.w2i[nt] for nt in self.label_vocab)
         with torch.no_grad():
             batch = self.pad_encoded(encoded)
-            gens = self.pretrained_model.generate(batch['input_ids'].to(device))
-            gens = self.retokenizer.tokenizer.decode(gens)
+
+            def allowed_types(bidx, pfx):
+                if pfx[0] == self.retokenizer.tokenizer.pad_token_id:
+                    pfx = pfx[1:]
+                return self.bs_allowed_types(batch['input_ids'][bidx], pfx, labes)
+
+            gens = self.pretrained_model.generate(
+                batch['input_ids'].to(device), num_beams=self.beam_size,
+                prefix_allowed_tokens_fn=allowed_types)
+
+        for i in range(len(encoded)):
+            gen = self.retokenizer.tokenizer.decode(gens[i], skip_special_tokens=True)
             if self.closing_label:
                 # maybe try to turn them into trees
                 for thing in self.label_vocab:
                     closep = thing + ")"
-                    for g, gen in enumerate(gens):
-                        gens[g] = gen.replace(closep, ")")
-            for g, gen in enumerate(gens):
-                gens[g] = nltk.tree.Tree.fromstring(gen)
-
-        for i in range(len(encoded)):
-            leaves = examples[i].pos()
+                    gen = gen.replace(closep, ")")
+            gentree = nltk.tree.Tree.fromstring(gen)
             if self.dummy_word is not None:
-                assert False
-            yield gens[i]
+                leaves = examples[i].pos()
+                for t, poz in enumerate(gentree.treepositions('leaves')):
+                    gentree[poz] = leaves[t]
+            yield gentree
             #yield self.decoder.tree_from_chart(charts_np[i], leaves=leaves)
 
     def parse(self, examples, subbatch_max_tokens=None):
