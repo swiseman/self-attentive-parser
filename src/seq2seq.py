@@ -223,7 +223,7 @@ class Seq2seqParser(nn.Module):
                     gentree = nltk.tree.Tree.fromstring(gen)
                 except ValueError: # still messed up, make a simple tree
                     gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
-                if gentree.leaves() != truleaves or any(
+                if len(gentree.leaves()) != len(truleaves) or any(
                     len(gentree[poz]) == 0 for poz in gentree.treepositions()):
                     gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
                 """
@@ -232,15 +232,11 @@ class Seq2seqParser(nn.Module):
                     if len(gentree[poz]) == 0:
                         del gentree[poz]
                 """
-                if self.dummy_word is not None:
-                    leaves = examples[i].leaves() #examples[i].pos()
-                    for t, poz in enumerate(gentree.treepositions('leaves')):
-                        gentree[poz] = leaves[t]
-                # i think we now need to do all the stuff they do so we can eval
-                # first add dummy poses so we can use their utilities.
-                nopostree = gentree.copy()
-                for poz in gentree.treepositions('leaves'):
-                    gentree[poz] = nltk.tree.Tree("POS", [nopostree[poz]])
+                # add dummy poses and true words, so we can eval.
+                # do this whether or not we use a dummy word.
+                for t, poz in enumerate(gentree.treepositions('leaves')):
+                    gentree[poz] = nltk.tree.Tree("POS", [truleaves[t]])
+
                 if len(gentree) == 1 and not isinstance(gentree[0], str):
                     gentree = nltk.tree.Tree("TOP", [gentree]) # otherwise root doesn't collapse
                 #try:
