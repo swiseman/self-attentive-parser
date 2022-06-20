@@ -67,6 +67,7 @@ def make_hparams():
         d_label_hidden=256,
         d_tag_hidden=256,
         tag_loss_scale=5.0,
+        weight_decay=0.0001,
     )
 
 
@@ -163,7 +164,7 @@ def run_train(args, hparams):
 
     # my stuff
     #hparams.learning_rate = 0.00005
-    hparams.weight_decay = 0.0001
+    #hparams.weight_decay = 0.0001
     #hparams.learning_rate_warmup_steps = 160
     hparams.clip_grad_norm = 1.0
     #hparams.batch_size = 64
