@@ -40,7 +40,7 @@ class Seq2seqParser(nn.Module):
         self.pretrained_model = T5ForConditionalGeneration.from_pretrained(hparams.pretrained_model)
         self.chart_decoder = decode_chart.ChartDecoder(
              label_vocab=self.label_vocab, force_root_constituent=hparams.force_root_constituent)
-        self.closing_label = hparams.closing_label
+        self.predspans, self.closing_label = hparams.predspans, hparams.closing_label
         self.dummy_word = hparams.dummy_word if hparams.dummy_word else None
         voc = self.retokenizer.tokenizer.vocab
         if hparams.add_label_tokens:
@@ -83,34 +83,35 @@ class Seq2seqParser(nn.Module):
 
     def encode(self, example):
         encoded = self.retokenizer(example.words, example.space_after)
+        l2i = self.chart_decoder.label_from_index
         if example.tree is not None:
-            tree = decode_chart.collapse_unary_strip_pos(example.tree)
-            lintree = decode_chart.my_pformat_flat(
-                tree, closing_label=self.closing_label, dummy_word=self.dummy_word)
-            treetokes = self.retokenizer.tokenizer(lintree.split(), is_split_into_words=True)
-            #encoded['decoder_input_ids'] = treetokes['input_ids']
-            #encoded['decoder_attention_mask'] = treetokes['attention_mask']
-            encoded["labels"] = treetokes['input_ids']
-            #self.chart_decoder.chart_from_tree(example.tree)
+            if self.predspans:
+                chart = self.chart_decoder.chart_from_tree(example.tree)
+                chart[chart == -100] = 0
+                co = self.chart_decoder.compressed_output_from_chart(chart)
+                lspans = []
+                [lspans.extend([str(co.starts[i]), str(co.ends[i]), l2i[co.labels[i]]])
+                 for i in range(len(co.starts))]
+                spantokes = self.retokenizer.tokenizer(lspans, is_split_into_words=True)
+                encoded["labels"] = spantokes['input_ids']
+            else:
+                tree = decode_chart.collapse_unary_strip_pos(example.tree)
+                lintree = decode_chart.my_pformat_flat(
+                    tree, closing_label=self.closing_label, dummy_word=self.dummy_word)
+                treetokes = self.retokenizer.tokenizer(lintree.split(), is_split_into_words=True)
+                encoded["labels"] = treetokes['input_ids']
         return encoded
 
     def pad_encoded(self, encoded_batch):
-        #batch = self.retokenizer.pad(
-        #    [{k: v for k, v in example.items()} for example in encoded_batch],
-        #    return_tensors="pt")
-        #batch = self.retokenizer.tokenizer.pad(
-        #    [{k: v for k, v in example.items() if k != 'words_from_tokens'}
-        #     for example in encoded_batch],
-        #    return_tensors="pt")
         batch = {k: pad_sequence(
             [torch.LongTensor(example[k]) for example in encoded_batch], batch_first=True,
             padding_value=self.retokenizer.tokenizer.pad_token_id)
                  for k in encoded_batch[0].keys() if k not in ['labels', 'words_from_tokens']}
         for key in ['labels', 'words_from_tokens']: # these need a different pad token
-           if key in encoded_batch[0]:
-               batch[key] = pad_sequence(
-                   [torch.LongTensor(example[key]) for example in encoded_batch],
-                   batch_first=True, padding_value=-100)
+            if key in encoded_batch[0]:
+                batch[key] = pad_sequence(
+                    [torch.LongTensor(example[key]) for example in encoded_batch],
+                     batch_first=True, padding_value=-100)
         return batch
 
     def _get_lens(self, encoded_batch):
@@ -136,7 +137,7 @@ class Seq2seqParser(nn.Module):
         #valid_token_mask = batch["valid_token_mask"].to(self.output_device)
         # for some reason we don't do device stuff in main
         device = self.pretrained_model.lm_head.weight.device
-        dec_attn_mask = (batch['labels'] != self.retokenizer.tokenizer.pad_token_id).to(
+        dec_attn_mask = (batch['labels'] != -100).to(
             batch['attention_mask'].dtype).to(device)
         return self.pretrained_model(
             input_ids=batch['input_ids'].to(device),
@@ -181,7 +182,7 @@ class Seq2seqParser(nn.Module):
         allowed = [input_ids[srcidx].item()]
         if nopen > nclosed + 1: # otherwise need a label
             allowed.append(cp)
-        if nopen < wlen*max_o_perwrd:    
+        if nopen < wlen*max_o_perwrd:
             allowed.append(op)
         return allowed
 
@@ -196,7 +197,8 @@ class Seq2seqParser(nn.Module):
             def allowed_types(bidx, pfx):
                 if pfx[0] == self.retokenizer.tokenizer.pad_token_id:
                     pfx = pfx[1:]
-                return self.bs_allowed_types(batch['input_ids'][bidx], pfx, lengths[bidx].item(), labes)
+                return self.bs_allowed_types(
+                    batch['input_ids'][bidx], pfx, lengths[bidx].item(), labes)
 
             allowed_fn = allowed_types if self.consearch else None
             gens = self.pretrained_model.generate(
@@ -206,37 +208,47 @@ class Seq2seqParser(nn.Module):
 
         #import ipdb; ipdb.set_trace()
         for i in range(len(encoded)):
-            if self.closing_label: # remove labels after close parenths
-                gen = [toke.item() for t, toke in enumerate(gens[i])
-                       if t == 0 or gens[i,t-1].item() != self.w2i[')']]
-            else:
-                gen = gens[i]
-            gen = self.retokenizer.tokenizer.decode(gen, skip_special_tokens=True)
-            truleaves = examples[i].leaves()
-            try:
-                gentree = nltk.tree.Tree.fromstring(gen)
-            except ValueError: # still messed up, make a simple tree
-                gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
-            if gentree.leaves() != truleaves:
-                gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
-            if self.dummy_word is not None:
-                leaves = examples[i].leaves() #examples[i].pos()
-                for t, poz in enumerate(gentree.treepositions('leaves')):
-                    gentree[poz] = leaves[t]
-            # i think we now need to do all the stuff they do so we can eval
-            # first add dummy poses so we can use their utilities.
-            nopostree = gentree.copy()
-            for poz in gentree.treepositions('leaves'):
-                gentree[poz] = nltk.tree.Tree("POS", [nopostree[poz]])
-            if len(gentree) == 1 and not isinstance(gentree[0], str):
-                gentree = nltk.tree.Tree("TOP", [gentree]) # otherwise root doesn't get collapsed
-            #try:
-            chart = self.chart_decoder.chart_from_tree(gentree)
-            #except AssertionError:
-            #    import ipdb; ipdb.set_trace()
-            chart[chart == -100] = 0
             poses = examples[i].pos()
-            co = self.chart_decoder.compressed_output_from_chart(chart)
+            if self.predspans:
+                pass
+            else:
+                if self.closing_label: # remove labels after close parenths
+                    gen = [toke.item() for t, toke in enumerate(gens[i])
+                           if t == 0 or gens[i,t-1].item() != self.w2i[')']]
+                else:
+                    gen = gens[i]
+                gen = self.retokenizer.tokenizer.decode(gen, skip_special_tokens=True)
+                truleaves = examples[i].leaves()
+                try:
+                    gentree = nltk.tree.Tree.fromstring(gen)
+                except ValueError: # still messed up, make a simple tree
+                    gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
+                if gentree.leaves() != truleaves or any(
+                    len(gentree[poz]) == 0 for poz in gentree.treepositions()):
+                    gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
+                """
+                # check for empty constituents
+                for poz in gentree.treepositions():
+                    if len(gentree[poz]) == 0:
+                        del gentree[poz]
+                """
+                if self.dummy_word is not None:
+                    leaves = examples[i].leaves() #examples[i].pos()
+                    for t, poz in enumerate(gentree.treepositions('leaves')):
+                        gentree[poz] = leaves[t]
+                # i think we now need to do all the stuff they do so we can eval
+                # first add dummy poses so we can use their utilities.
+                nopostree = gentree.copy()
+                for poz in gentree.treepositions('leaves'):
+                    gentree[poz] = nltk.tree.Tree("POS", [nopostree[poz]])
+                if len(gentree) == 1 and not isinstance(gentree[0], str):
+                    gentree = nltk.tree.Tree("TOP", [gentree]) # otherwise root doesn't collapse
+                #try:
+                chart = self.chart_decoder.chart_from_tree(gentree)
+                #except AssertionError:
+                #    import ipdb; ipdb.set_trace()
+                chart[chart == -100] = 0
+                co = self.chart_decoder.compressed_output_from_chart(chart)
             yield co.to_tree(poses, self.chart_decoder.label_from_index)
             #yield self.decoder.tree_from_chart(charts_np[i], leaves=leaves)
 

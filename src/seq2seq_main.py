@@ -73,6 +73,7 @@ def make_hparams():
         add_label_tokens=True,
         beam_size = 4,
         lenmult = 8,
+        predspans = False,
         consearch = False,
     )
 
