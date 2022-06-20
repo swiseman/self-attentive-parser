@@ -9,7 +9,10 @@ import torch.nn.functional as F
 from transformers import AutoConfig, AutoModel
 
 import nltk
-import torch_struct
+try:
+    import torch_struct
+except ImportError:
+    print("not importing torch_struct; fine if just doing seq2seq or transformer stuff...")
 
 from . import char_lstm
 from . import decode_chart

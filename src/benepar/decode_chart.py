@@ -7,7 +7,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch_struct
+
+try:
+    import torch_struct
+except ImportError:
+    print("not importing torch_struct; fine if just doing seq2seq or transformer stuff...")
 
 from .parse_base import CompressedParserOutput
 
