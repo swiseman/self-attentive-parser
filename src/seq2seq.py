@@ -150,7 +150,7 @@ class Seq2seqParser(nn.Module):
     # this is gonna be slower than necessary, but annoying to much w/ beam search too much
     def bs_allowed_types(self, input_ids, pfx, wlen, labes):
         op, cp = self.w2i['▁('], self.w2i[')']
-        dummy = self.w2i['▁' + self.dummy_word] if self.dummy_word is not None else None # CHECK!
+        dummy = self.w2i[self.dummy_word] if self.dummy_word is not None else None # CHECK!
         eos = self.retokenizer.tokenizer.eos_token_id
         if pfx.size(0) == 0:
             return [op]
@@ -216,7 +216,6 @@ class Seq2seqParser(nn.Module):
             try:
                 gentree = nltk.tree.Tree.fromstring(gen)
             except ValueError: # still messed up, make a simple tree
-                #import ipdb; ipdb.set_trace()
                 gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
             if gentree.leaves() != truleaves:
                 gentree = nltk.tree.Tree.fromstring("(S " + " ".join(truleaves) + ")")
