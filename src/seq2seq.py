@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModel, AutoConfig, T5ForConditionalG
 #from transformers.tokenization_utils import TruncationStrategy
 from torch.nn.utils.rnn import pad_sequence
 
-from benepar import retokenization, decode_chart, nkutil, subbatching
+from benepar import retokenization, decode_chart, nkutil, subbatching, parse_base
 
 class Seq2seqParser(nn.Module):
     def __init__(self, label_vocab, hparams, pretrained_model_path=None):
@@ -210,7 +210,20 @@ class Seq2seqParser(nn.Module):
         for i in range(len(encoded)):
             poses = examples[i].pos()
             if self.predspans:
-                pass
+                gen = self.retokenizer.tokenizer.decode(
+                    gens[i], skip_special_tokens=True).split()
+                try:
+                    starts, ends, labels = [], [], []
+                    for j in range(0, len(gen), 3):
+                        starts.append(int(gen[j]))
+                        ends.append(int(gen[j+1]))
+                        labels.append(self.label_vocab[gen[j+2]])
+                except:
+                    starts = [0]
+                    ends = [len(poses)]
+                    labels = [self.label_vocab['S']]
+                co = parse_base.CompressedParserOutput(
+                    np.array(starts), np.array(ends), np.array(labels))                
             else:
                 if self.closing_label: # remove labels after close parenths
                     gen = [toke.item() for t, toke in enumerate(gens[i])
