@@ -17,6 +17,7 @@ import learning_rates
 import treebanks
 
 def format_elapsed(start_time):
+    print(time.time() - start_time)
     elapsed_time = int(time.time() - start_time)
     minutes, seconds = divmod(elapsed_time, 60)
     hours, minutes = divmod(minutes, 60)
@@ -329,7 +330,7 @@ def run_train(args, hparams):
                 #scheduler.step()
             else:
                 scheduler.step()
-        print(time.time()-epoch_start_time)
+        print(f"====={time.time()-epoch_start_time}=====")
 
         if (total_processed - best_dev_processed) > (
             (hparams.step_decay_patience + 1)
