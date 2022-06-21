@@ -487,6 +487,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             #mask[..., 0] = 0 # also we don't really need to predict the 0 label
             span_loss = (losses*mask).sum() / mask.sum()
         else:
+            import ipdb; ipdb.set_trace()
             losses = F.cross_entropy(
                 span_scores.view(-1, span_scores.size(3)), span_labels.view(-1))
             span_loss = losses # should already only avg over stuff that isn't -100

@@ -447,6 +447,7 @@ def main():
     subparser.add_argument("--pants", action="store_true")
 
     args = parser.parse_args()
+    print(args)
     args.callback(args)
 
 
