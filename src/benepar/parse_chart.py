@@ -518,16 +518,20 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
                 if hasattr(self, "pants") and self.pants:
+                    print("Eval-Pants")
                     # really a list of compressed outputs now.
                     charts_np = self.decoder.pants(
                        span_scores, lengths.to(span_scores.device), self.stop_thresh)
                 elif self.mode == "bce":
+                    print("Eval-BCE")
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
                         span_scores, lengths.to(span_scores.device), thresh=self.stop_thresh)
                 elif self.mode == "mlr":
+                    print("Eval-MLR")
                     charts_np = self.decoder.charts_from_pytorch_scores_batched3(
                          span_scores, lengths.to(span_scores.device))
                 else:
+                    print("Eval-TreeCRF")
                     charts_np = self.decoder.charts_from_pytorch_scores_batched(
                         span_scores, lengths.to(span_scores.device)
                     )
