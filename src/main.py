@@ -282,6 +282,7 @@ def run_train(args, hparams):
 
             batch_loss_value = 0.0
             for subbatch_size, subbatch in batch:
+                print(args.mode)
                 if args.mode:
                     print("Train-BCE/MLR")
                     loss = parser.compute_loss2(subbatch)
