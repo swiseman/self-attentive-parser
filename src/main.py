@@ -329,6 +329,7 @@ def run_train(args, hparams):
                 #scheduler.step()
             else:
                 scheduler.step()
+        print(time.time()-epoch_start_time)
 
         if (total_processed - best_dev_processed) > (
             (hparams.step_decay_patience + 1)
