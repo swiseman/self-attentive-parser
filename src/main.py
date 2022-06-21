@@ -301,7 +301,6 @@ def run_train(args, hparams):
 
             optimizer.step()
 
-            """
             print(
                 "epoch {:,} "
                 "batch {:,}/{:,} "
@@ -320,7 +319,6 @@ def run_train(args, hparams):
                     format_elapsed(start_time),
                 )
             )
-            """
 
             if current_processed >= check_every:
                 current_processed -= check_every
@@ -329,7 +327,6 @@ def run_train(args, hparams):
                 #scheduler.step()
             else:
                 scheduler.step()
-        print(f"====={time.time()-epoch_start_time}=====")
 
         if (total_processed - best_dev_processed) > (
             (hparams.step_decay_patience + 1)
