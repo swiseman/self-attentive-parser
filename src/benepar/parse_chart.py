@@ -487,7 +487,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             #mask[..., 0] = 0 # also we don't really need to predict the 0 label
             span_loss = (losses*mask).sum() / mask.sum()
         else:
-            import ipdb; ipdb.set_trace()
             losses = F.cross_entropy(
                 span_scores.view(-1, span_scores.size(3)), span_labels.view(-1))
             span_loss = losses # should already only avg over stuff that isn't -100
@@ -519,20 +518,16 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 # Start/stop tokens don't count, so subtract 2
                 lengths = batch["valid_token_mask"].sum(-1) - 2
                 if hasattr(self, "pants") and self.pants:
-                    print("Eval-Pants")
                     # really a list of compressed outputs now.
                     charts_np = self.decoder.pants(
                        span_scores, lengths.to(span_scores.device), self.stop_thresh)
                 elif self.mode == "bce":
-                    print("Eval-BCE")
                     charts_np = self.decoder.charts_from_pytorch_scores_batched2(
                         span_scores, lengths.to(span_scores.device), thresh=self.stop_thresh)
                 elif self.mode == "mlr":
-                    print("Eval-MLR")
                     charts_np = self.decoder.charts_from_pytorch_scores_batched3(
                          span_scores, lengths.to(span_scores.device))
                 else:
-                    print("Eval-TreeCRF")
                     charts_np = self.decoder.charts_from_pytorch_scores_batched(
                         span_scores, lengths.to(span_scores.device)
                     )
