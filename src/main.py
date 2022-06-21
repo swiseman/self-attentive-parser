@@ -17,7 +17,6 @@ import learning_rates
 import treebanks
 
 def format_elapsed(start_time):
-    print(time.time() - start_time)
     elapsed_time = int(time.time() - start_time)
     minutes, seconds = divmod(elapsed_time, 60)
     hours, minutes = divmod(minutes, 60)
@@ -374,6 +373,7 @@ def run_test(args):
         test_treebank.without_gold_annotations(),
         subbatch_max_tokens=args.subbatch_max_tokens,
     )
+    print(f"{time.time()-start_time}")
 
     if args.output_path == "-":
         for tree in test_predicted:
