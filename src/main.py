@@ -370,7 +370,6 @@ def run_test(args):
         test_treebank.without_gold_annotations(),
         subbatch_max_tokens=args.subbatch_max_tokens,
     )
-    print(f"{time.time()-start_time}")
 
     if args.output_path == "-":
         for tree in test_predicted:
@@ -444,7 +443,6 @@ def main():
     subparser.add_argument("--pants", action="store_true")
 
     args = parser.parse_args()
-    print(args)
     args.callback(args)
 
 

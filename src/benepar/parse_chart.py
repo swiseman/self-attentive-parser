@@ -605,6 +605,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 return_scores=return_scores, return_amax=return_amax,
             )
             res = list(res)
-        print(f"{time.time()-start:.2f}")
+        print(f"Evaluation takes {time.time()-start:.2f}s")
         self.train(training)
         return res
