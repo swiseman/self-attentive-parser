@@ -585,6 +585,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         training = self.training
         self.eval()
         encoded = [self.encode(example) for example in examples]
+        import time
+        start=time.time()
         if subbatch_max_tokens is not None:
             res = subbatching.map(
                 self._parse_encoded,
@@ -603,5 +605,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 return_scores=return_scores, return_amax=return_amax,
             )
             res = list(res)
+        print(f"{time.time()-start:.2f}")
         self.train(training)
         return res
