@@ -50,8 +50,7 @@ class Seq2seqParser(nn.Module):
             self.pretrained_model.resize_token_embeddings(len(self.retokenizer.tokenizer))
         self.w2i = self.retokenizer.tokenizer.vocab # i think it changed???
         #self.i2w = {i: w for w, i in self.w2i.items()}
-        #self.consearch = hparams.consearch
-        self.consearch = True
+        self.consearch = hparams.consearch
         self.beam_size = hparams.beam_size
         self.lenmult = hparams.lenmult
 
@@ -203,7 +202,6 @@ class Seq2seqParser(nn.Module):
                     batch['input_ids'][bidx], pfx, lengths[bidx].item(), labes)
 
             allowed_fn = allowed_types if self.consearch else None
-            print("allowed_fn: ", allowed_fn)
             gens = self.pretrained_model.generate(
                 batch['input_ids'].to(device), num_beams=self.beam_size,
                 prefix_allowed_tokens_fn=allowed_fn,
