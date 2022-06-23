@@ -282,7 +282,6 @@ def run_train(args, hparams):
         for batch_num, batch in enumerate(data_loader, start=1):
             optimizer.zero_grad()
             parser.train()
-            import ipdb; ipdb.set_trace()
 
             batch_loss_value = 0.0
             for subbatch_size, subbatch in batch:

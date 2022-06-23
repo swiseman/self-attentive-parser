@@ -173,6 +173,7 @@ class ChartDecoder:
 
     def chart_from_tree(self, tree):
         spans = get_labeled_spans(tree)
+        import ipdb; ipdb.set_trace()
         num_words = len(tree.leaves())
         chart = np.full((num_words, num_words), -100, dtype=int)
         chart = np.tril(chart, -1)
