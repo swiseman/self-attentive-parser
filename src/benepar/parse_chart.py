@@ -405,7 +405,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         return span_scores, tag_scores
 
     def forward(self, batch):
-        print(self.residual, self.span_feature_mode)
         valid_token_mask = batch["valid_token_mask"].to(self.output_device)
 
         if (
