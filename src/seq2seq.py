@@ -50,7 +50,8 @@ class Seq2seqParser(nn.Module):
             self.pretrained_model.resize_token_embeddings(len(self.retokenizer.tokenizer))
         self.w2i = self.retokenizer.tokenizer.vocab # i think it changed???
         #self.i2w = {i: w for w, i in self.w2i.items()}
-        self.consearch = hparams.consearch
+        #self.consearch = hparams.consearch
+        self.consearch = True
         self.beam_size = hparams.beam_size
         self.lenmult = hparams.lenmult
 
