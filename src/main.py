@@ -2,6 +2,7 @@ import argparse
 import functools
 import itertools
 import os.path
+from re import sub
 import time
 
 import torch
@@ -426,6 +427,12 @@ def main():
     subparser.add_argument("--print-vocabs", action="store_true")
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
+    subparser.add_argument(
+        "--span-feature-mode", 
+        type=str,
+        default="cat",
+        choices=["sub", "mul"]
+    )
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)
