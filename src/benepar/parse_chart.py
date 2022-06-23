@@ -243,7 +243,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             encoded = self.retokenizer(example.words, return_tensors="np")
         else:
             encoded = self.retokenizer(example.words, example.space_after)
-
+        import ipdb; ipdb.set_trace()
         if example.tree is not None:
             if self.mode == "bce":
                 encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
