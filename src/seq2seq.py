@@ -202,6 +202,7 @@ class Seq2seqParser(nn.Module):
                     batch['input_ids'][bidx], pfx, lengths[bidx].item(), labes)
 
             allowed_fn = allowed_types if self.consearch else None
+            print("allowed_fn: ", allowed_fn)
             gens = self.pretrained_model.generate(
                 batch['input_ids'].to(device), num_beams=self.beam_size,
                 prefix_allowed_tokens_fn=allowed_fn,

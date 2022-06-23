@@ -460,6 +460,7 @@ def main():
     subparser.add_argument("--no-predict-tags", action="store_true")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
     subparser.add_argument("--pants", action="store_true")
+    subparser.add_argument("--consearch", action="store_true")
 
     args = parser.parse_args()
     args.callback(args)
