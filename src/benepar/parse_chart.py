@@ -124,9 +124,14 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.Linear(hparams.d_label_hidden, len(label_vocab)),
         )
         """
+        self.span_feature_mode = hparams.span_feature_mode
+        if self.span_feature_mode == "cat":
+            inp_dim = d_pretrained
+        elif self.span_feature_mode in ["sub", "mul"]:
+            inp_dim = d_pretrained // 2
 
         self.f_label = nn.Sequential(
-            nn.Linear(d_pretrained, d_pretrained),
+            nn.Linear(inp_dim, d_pretrained),
             nn.GELU(),
             nn.LayerNorm(d_pretrained),
             #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
@@ -160,7 +165,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             )
         if hasattr(hparams, "stop_thresh"):
             self.stop_thresh = hparams.stop_thresh
-        self.span_feature_mode = hparams.span_feature_mode
         self.parallelized_devices = None
 
     @property
@@ -445,11 +449,22 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             tag_scores = self.f_tag(annotations)
         else:
             tag_scores = None
-        import ipdb; ipdb.set_trace()
         if self.span_feature_mode == "cat":
             span_features = torch.cat( # bsz x T x T x dim
                 [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
                 annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)
+        elif self.span_feature_mode == "sub":
+            span_features = (
+                annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz) -
+                annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)
+            )
+        elif self.span_feature_mode == "mul":
+            span_features = (
+                annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz) *
+                annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)
+            )
+        else:
+            assert False, f"Mode {self.span_feature_mode} not supported"
         # span_features[b,j,i] is cat of (1st half i-th token rep, 2nd half j-th token rep)
 
         span_scores = self.f_label(span_features)
