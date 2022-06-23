@@ -125,18 +125,40 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         )
         """
         self.span_feature_mode = hparams.span_feature_mode
+        self.residual = hparams.residual
         if self.span_feature_mode == "cat":
-            inp_dim = d_pretrained
+            fan_in = d_pretrained
         elif self.span_feature_mode in ["sub", "mul"]:
-            inp_dim = d_pretrained // 2
+            fan_in = d_pretrained // 2
+        if self.residual:
+            # for resnets, we use a deeper mlp block for feature extraction
+            self.f_repr = nn.Sequential(
+                nn.Linear(fan_in, d_pretrained),
+                nn.GELU(),
+                nn.LayerNorm(fan_in),
+                nn.Linear(d_pretrained, fan_in),
+                nn.GELU(),
+                nn.LayerNorm(fan_in),
+                #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+            )
+            self.f_label = nn.Linear(fan_in, len(label_vocab))
+        else:
+            self.f_label = nn.Sequential(
+                nn.Linear(fan_in, d_pretrained),
+                nn.GELU(),
+                nn.LayerNorm(d_pretrained),
+                #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+                nn.Linear(d_pretrained, len(label_vocab))
+            )
 
-        self.f_label = nn.Sequential(
-            nn.Linear(inp_dim, d_pretrained),
-            nn.GELU(),
-            nn.LayerNorm(d_pretrained),
-            #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
-            nn.Linear(d_pretrained, len(label_vocab)),
-        )
+
+        # self.f_label = nn.Sequential(
+        #     nn.Linear(inp_dim, d_pretrained),
+        #     nn.GELU(),
+        #     nn.LayerNorm(d_pretrained),
+        #     #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+        #     nn.Linear(d_pretrained, len(label_vocab)),
+        # )
 
 
         if hparams.predict_tags:
@@ -466,8 +488,11 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         else:
             assert False, f"Mode {self.span_feature_mode} not supported"
         # span_features[b,j,i] is cat of (1st half i-th token rep, 2nd half j-th token rep)
-
-        span_scores = self.f_label(span_features)
+        if self.residual:
+            span_features = self.f_repr(span_features) + span_features
+            span_scores = self.f_label(span_features)
+        else:
+            span_scores = self.f_label(span_features)
         #span_scores = torch.cat(
         #    [span_scores.new_zeros(span_scores.shape[:-1] + (1,)), span_scores], -1)
         return span_scores, tag_scores

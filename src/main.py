@@ -70,6 +70,7 @@ def make_hparams():
         tag_loss_scale=5.0,
         weight_decay=0.0001,
         span_feature_mode="cat",
+        residual=False,
     )
 
 
