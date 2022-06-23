@@ -69,6 +69,7 @@ def make_hparams():
         d_tag_hidden=256,
         tag_loss_scale=5.0,
         weight_decay=0.0001,
+        span_feature_mode="cat",
     )
 
 
@@ -427,12 +428,6 @@ def main():
     subparser.add_argument("--print-vocabs", action="store_true")
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
-    subparser.add_argument(
-        "--span-feature-mode", 
-        type=str,
-        default="cat",
-        choices=["sub", "mul"]
-    )
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)
