@@ -127,30 +127,29 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         self.span_feature_mode = hparams.span_feature_mode
         self.residual = hparams.residual
         if self.span_feature_mode == "cat":
-            fan_in = d_pretrained
+            io_dim = d_pretrained
         elif self.span_feature_mode in ["sub", "mul"]:
-            fan_in = d_pretrained // 2
+            io_dim = d_pretrained // 2
         if self.residual:
             # for resnets, we use a deeper mlp block for feature extraction
             self.f_repr = nn.Sequential(
-                nn.Linear(fan_in, d_pretrained),
+                nn.Linear(io_dim, d_pretrained),
                 nn.GELU(),
-                nn.LayerNorm(fan_in),
-                nn.Linear(d_pretrained, fan_in),
+                nn.LayerNorm(io_dim),
+                nn.Linear(d_pretrained, io_dim),
                 nn.GELU(),
-                nn.LayerNorm(fan_in),
+                nn.LayerNorm(io_dim),
                 #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
             )
-            self.f_label = nn.Linear(fan_in, len(label_vocab))
+            self.f_label = nn.Linear(io_dim, len(label_vocab))
         else:
             self.f_label = nn.Sequential(
-                nn.Linear(fan_in, d_pretrained),
+                nn.Linear(io_dim, d_pretrained),
                 nn.GELU(),
                 nn.LayerNorm(d_pretrained),
                 #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
                 nn.Linear(d_pretrained, len(label_vocab))
             )
-
 
         # self.f_label = nn.Sequential(
         #     nn.Linear(inp_dim, d_pretrained),
@@ -236,6 +235,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         config["hparams"] = nkutil.HParams(**hparams)
         parser = cls(**config)
         parser.load_state_dict(state_dict)
+        print(parser.span_feature_mode, parser.residual)
         return parser
 
     def encode(self, example):
