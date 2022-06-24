@@ -371,12 +371,12 @@ def run_test(args):
 
     model_path = args.model_path[0]
     print("Loading model from {}...".format(model_path))
-    parser = parse_chart.ChartParser.from_trained(model_path)
-    if args.no_predict_tags and parser.f_tag is not None:
-        print("Removing part-of-speech tagging head...")
-        parser.f_tag = None
-    parser.stop_thresh = args.stop_thresh
-    parser.pants = args.pants
+    parser = seq2seq.Seq2seqParser.from_trained(model_path)
+    # if args.no_predict_tags and parser.f_tag is not None:
+    #     print("Removing part-of-speech tagging head...")
+    #     parser.f_tag = None
+    #parser.stop_thresh = args.stop_thresh
+    #parser.pants = args.pants
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():

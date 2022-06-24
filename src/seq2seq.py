@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import nltk
 
-from transformers import AutoTokenizer, AutoModel, AutoConfig, T5ForConditionalGeneration
+from transformers import AutoTokenizer, AutoModel, AutoConfig, T5ForConditionalGeneration, MT5ForConditionalGeneration
 #from transformers.utils import PaddingStrategy
 #from transformers.tokenization_utils import TruncationStrategy
 from torch.nn.utils.rnn import pad_sequence
@@ -37,7 +37,8 @@ class Seq2seqParser(nn.Module):
         """
         #self.pretrained_model = AutoModel.from_config(
         #    AutoConfig.from_pretrained(hparams.pretrained_model))
-        self.pretrained_model = T5ForConditionalGeneration.from_pretrained(hparams.pretrained_model)
+        # self.pretrained_model = T5ForConditionalGeneration.from_pretrained(hparams.pretrained_model)
+        self.pretrained_model = MT5ForConditionalGeneration.from_pretrained(hparams.pretrained_model)
         self.chart_decoder = decode_chart.ChartDecoder(
              label_vocab=self.label_vocab, force_root_constituent=hparams.force_root_constituent)
         self.predspans, self.closing_label = hparams.predspans, hparams.closing_label

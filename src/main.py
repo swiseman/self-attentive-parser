@@ -2,6 +2,7 @@ import argparse
 import functools
 import itertools
 import os.path
+from re import sub
 import time
 
 import torch
@@ -68,6 +69,8 @@ def make_hparams():
         d_tag_hidden=256,
         tag_loss_scale=5.0,
         weight_decay=0.0001,
+        span_feature_mode="cat",
+        residual=False,
     )
 
 
@@ -301,7 +304,6 @@ def run_train(args, hparams):
 
             optimizer.step()
 
-            """
             print(
                 "epoch {:,} "
                 "batch {:,}/{:,} "
@@ -320,7 +322,6 @@ def run_train(args, hparams):
                     format_elapsed(start_time),
                 )
             )
-            """
 
             if current_processed >= check_every:
                 current_processed -= check_every

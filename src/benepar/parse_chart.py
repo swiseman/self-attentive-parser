@@ -124,14 +124,40 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.Linear(hparams.d_label_hidden, len(label_vocab)),
         )
         """
+        self.span_feature_mode = hparams.span_feature_mode
+        self.residual = hparams.residual
+        if self.span_feature_mode == "cat":
+            io_dim = d_pretrained
+        elif self.span_feature_mode in ["sub", "mul"]:
+            io_dim = d_pretrained // 2
+        if self.residual:
+            # for resnets, we use a deeper mlp block for feature extraction
+            self.f_repr = nn.Sequential(
+                nn.Linear(io_dim, d_pretrained),
+                nn.GELU(),
+                nn.LayerNorm(io_dim),
+                nn.Linear(d_pretrained, io_dim),
+                nn.GELU(),
+                nn.LayerNorm(io_dim),
+                #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+            )
+            self.f_label = nn.Linear(io_dim, len(label_vocab))
+        else:
+            self.f_label = nn.Sequential(
+                nn.Linear(io_dim, d_pretrained),
+                nn.GELU(),
+                nn.LayerNorm(d_pretrained),
+                #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+                nn.Linear(d_pretrained, len(label_vocab))
+            )
 
-        self.f_label = nn.Sequential(
-            nn.Linear(d_pretrained, d_pretrained),
-            nn.GELU(),
-            nn.LayerNorm(d_pretrained),
-            #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
-            nn.Linear(d_pretrained, len(label_vocab)),
-        )
+        # self.f_label = nn.Sequential(
+        #     nn.Linear(inp_dim, d_pretrained),
+        #     nn.GELU(),
+        #     nn.LayerNorm(d_pretrained),
+        #     #nn.Linear(hparams.d_label_hidden, max(label_vocab.values())),
+        #     nn.Linear(d_pretrained, len(label_vocab)),
+        # )
 
 
         if hparams.predict_tags:
@@ -160,7 +186,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             )
         if hasattr(hparams, "stop_thresh"):
             self.stop_thresh = hparams.stop_thresh
-
         self.parallelized_devices = None
 
     @property
@@ -210,6 +235,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         config["hparams"] = nkutil.HParams(**hparams)
         parser = cls(**config)
         parser.load_state_dict(state_dict)
+        print(parser.span_feature_mode, parser.residual)
         return parser
 
     def encode(self, example):
@@ -217,7 +243,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             encoded = self.retokenizer(example.words, return_tensors="np")
         else:
             encoded = self.retokenizer(example.words, example.space_after)
-
+        #import ipdb; ipdb.set_trace()
         if example.tree is not None:
             if self.mode == "bce":
                 encoded["span_labels"] = self.decoder.chart_from_tree2(example.tree)
@@ -445,13 +471,28 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             tag_scores = self.f_tag(annotations)
         else:
             tag_scores = None
-
-        span_features = torch.cat( # bsz x T x T x dim
-            [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
-             annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)
+        if self.span_feature_mode == "cat":
+            span_features = torch.cat( # bsz x T x T x dim
+                [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
+                annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)
+        elif self.span_feature_mode == "sub":
+            span_features = (
+                annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz) -
+                annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)
+            )
+        elif self.span_feature_mode == "mul":
+            span_features = (
+                annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz) *
+                annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)
+            )
+        else:
+            assert False, f"Mode {self.span_feature_mode} not supported"
         # span_features[b,j,i] is cat of (1st half i-th token rep, 2nd half j-th token rep)
-
-        span_scores = self.f_label(span_features)
+        if self.residual:
+            span_features = self.f_repr(span_features) + span_features
+            span_scores = self.f_label(span_features)
+        else:
+            span_scores = self.f_label(span_features)
         #span_scores = torch.cat(
         #    [span_scores.new_zeros(span_scores.shape[:-1] + (1,)), span_scores], -1)
         return span_scores, tag_scores
@@ -585,6 +626,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         training = self.training
         self.eval()
         encoded = [self.encode(example) for example in examples]
+        import time
+        start=time.time()
         if subbatch_max_tokens is not None:
             res = subbatching.map(
                 self._parse_encoded,
@@ -603,5 +646,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 return_scores=return_scores, return_amax=return_amax,
             )
             res = list(res)
+        print(f"Evaluation takes {time.time()-start:.2f}s")
         self.train(training)
         return res
