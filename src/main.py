@@ -130,8 +130,8 @@ def run_train(args, hparams):
         )
         print("Set hparams.force_root_constituent to", hparams.force_root_constituent)
 
-    hparams.mode = args.mode
-    hparams.ho, hparams.inner_mean_pool = args.higher_order, args.inner_mean_pool
+    hparams.mode, hparams.share_layers = args.mode, args.share_layers
+    hparams.higher_order, hparams.inner_mean_pool = args.higher_order, args.inner_mean_pool
     hparams.stop_thresh = args.stop_thresh
     print("Initializing model...")
     parser = parse_chart.ChartParser(
@@ -140,13 +140,6 @@ def run_train(args, hparams):
         char_vocab=char_vocab,
         hparams=hparams,
     )
-
-    nudropp = 0.1
-    def update_dropout(m):
-        if type(m) == torch.nn.Dropout:
-            m.p = nudropp
-    parser.apply(update_dropout)
-
 
     if args.parallelize:
         parser.parallelize()
@@ -162,13 +155,6 @@ def run_train(args, hparams):
     #optimizer = torch.optim.Adam(
     #    trainable_parameters, lr=hparams.learning_rate, betas=(0.9, 0.98), eps=1e-9
     #)
-
-    # my stuff
-    #hparams.learning_rate = 0.00005
-    #hparams.weight_decay = 0.0001
-    #hparams.learning_rate_warmup_steps = 160
-    hparams.clip_grad_norm = 1.0
-    #hparams.batch_size = 64
 
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
@@ -339,6 +325,9 @@ def run_train(args, hparams):
             print("Terminating due to lack of improvement in dev fscore.")
             break
 
+        if args.max_epochs is not None and epoch >= args.max_epochs:
+            break
+
 
 def run_test(args):
     print("Loading test trees from {}...".format(args.test_path))
@@ -429,8 +418,11 @@ def main():
     subparser.add_argument("--print-vocabs", action="store_true")
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])
     subparser.add_argument("--higher-order", action="store_true", help="")
+    subparser.add_argument("--share-layers", action="store_true", help="")
     subparser.add_argument("--inner-mean-pool", action="store_true", help="")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
+    subparser.add_argument("--max-epochs", type=int, default=None)
+    subparser.add_argument("--nruns", type=int, default=1)
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)
@@ -449,7 +441,32 @@ def main():
 
     args = parser.parse_args()
     print(args)
-    args.callback(args)
+
+    if args.nruns > 1:
+        args.max_epochs = 25
+        grid = {
+            # 'position_embedding_type': ['absolute', 'relative_key'],
+            'clip_grad_norm': [0.0, 1.0, 10.0],
+            'relu_dropout': [0.1, 0.3, 0.5],
+            'share_layers': [True, False],
+            # 'inner_mean_pool': [True, False],
+            'learning_rate': [1e-5, 3e-5, 5e-5, 1e-4],
+            'weight_decay': [0, 1e-4, 1e-3],
+            'learning_rate_warmup_steps': [160, 500, 1000],
+            'batch_size': [32, 64, 128],
+        }
+        for j in range(args.nruns):
+            torch.manual_seed(args.numpy_seed + j) # this is a dumb hack so we get different stuff
+            rdict = {k: v[torch.randint(len(v), (1,)).item()] for k, v in grid.items()}
+            for k, v in rdict.items():
+                if False and k == "train_batch_size" and v > 64:
+                    args.train_batch_size = 64
+                    args.grad_accum_steps = v // 64
+                else:
+                    args.__dict__[k] = v
+            args.callback(args)
+    else:
+        args.callback(args)
 
 
 if __name__ == "__main__":

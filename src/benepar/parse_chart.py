@@ -80,6 +80,10 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                     AutoConfig.from_pretrained(pretrained_model_path)
                 )
             d_pretrained = self.pretrained_model.config.hidden_size
+            if hparams.share_layers:
+                shared_layer = self.pretrained_model.encoder.layer[0]
+                for l in range(1, len(self.pretrained_model.encoder.layer)):
+                    self.pretrained_model.encoder.layer[l] = shared_layer
 
             #"""
             if hparams.use_encoder:
@@ -126,6 +130,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         """
 
         self.f_label = nn.Sequential(
+            nn.Dropout(p=hparams.relu_dropout),
             nn.Linear(d_pretrained, d_pretrained),
             nn.GELU(),
             nn.LayerNorm(d_pretrained),
@@ -137,6 +142,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         if hparams.higher_order:
             self.mean_pool = True
             self.icls = nn.Sequential(
+                        nn.Dropout(p=hparams.relu_dropout),
                         nn.Linear(d_pretrained, d_pretrained),
                         nn.GELU(),
                         nn.LayerNorm(d_pretrained),
