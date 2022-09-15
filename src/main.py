@@ -131,6 +131,7 @@ def run_train(args, hparams):
         print("Set hparams.force_root_constituent to", hparams.force_root_constituent)
 
     hparams.mode = args.mode
+    hparams.ho, hparams.inner_mean_pool = args.higher_order, args.inner_mean_pool
     hparams.stop_thresh = args.stop_thresh
     print("Initializing model...")
     parser = parse_chart.ChartParser(
@@ -427,6 +428,8 @@ def main():
     subparser.add_argument("--parallelize", action="store_true")
     subparser.add_argument("--print-vocabs", action="store_true")
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])
+    subparser.add_argument("--higher-order", action="store_true", help="")
+    subparser.add_argument("--inner-mean-pool", action="store_true", help="")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
 
     subparser = subparsers.add_parser("test")
@@ -445,6 +448,7 @@ def main():
     subparser.add_argument("--pants", action="store_true")
 
     args = parser.parse_args()
+    print(args)
     args.callback(args)
 
 

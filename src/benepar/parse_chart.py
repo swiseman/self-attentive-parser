@@ -133,6 +133,14 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nn.Linear(d_pretrained, len(label_vocab)),
         )
 
+        self.higher_order = hparams.higher_order
+        if hparams.higher_order:
+            self.mean_pool = True
+            self.icls = nn.Sequential(
+                        nn.Linear(d_pretrained, d_pretrained),
+                        nn.GELU(),
+                        nn.LayerNorm(d_pretrained),
+                        nn.Linear(d_pretrained, len(label_vocab)))
 
         if hparams.predict_tags:
             self.f_tag = nn.Sequential(
@@ -452,8 +460,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         # span_features[b,j,i] is cat of (1st half i-th token rep, 2nd half j-th token rep)
 
         span_scores = self.f_label(span_features)
-        #span_scores = torch.cat(
-        #    [span_scores.new_zeros(span_scores.shape[:-1] + (1,)), span_scores], -1)
         return span_scores, tag_scores
 
     def compute_loss(self, batch):
@@ -475,9 +481,62 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             tag_loss = tag_loss / batch["batch_num_tokens"]
             return span_loss + tag_loss
 
+    def ho_forward(self, batch):
+        valid_token_mask = batch["valid_token_mask"].to(self.output_device)
+
+        input_ids = batch["input_ids"].to(self.device)
+        words_from_tokens = batch["words_from_tokens"].to(self.output_device)
+        pretrained_attention_mask = batch["attention_mask"].to(self.device)
+
+        extra_kwargs = {}
+        if "token_type_ids" in batch:
+            extra_kwargs["token_type_ids"] = batch["token_type_ids"].to(self.device)
+        if "decoder_input_ids" in batch:
+            extra_kwargs["decoder_input_ids"] = batch["decoder_input_ids"].to(self.device)
+            extra_kwargs["decoder_attention_mask"] = batch["decoder_attention_mask"].to(
+                self.device)
+
+        pretrained_out = self.pretrained_model(
+            input_ids, attention_mask=pretrained_attention_mask,
+            output_hidden_states=True, **extra_kwargs)
+        features = pretrained_out.last_hidden_state.to(self.output_device)
+        # Note that words_from_tokens uses index -100 for invalid positions
+        zerod_wrd_from_tokens = F.relu(words_from_tokens)
+        features = features[torch.arange(features.shape[0])[:, None], zerod_wrd_from_tokens]
+        nvalid_mask = ~valid_token_mask[:, :, None]
+        features.masked_fill_(nvalid_mask, 0)
+        # choice 1
+        if self.mean_pool:
+            nnz = valid_token_mask.sum(1)
+            iscore = self.icls(features.sum(1).div_(nnz.view(-1, 1))).sum()
+        else:
+            iscore = self.icls(features[:, 0]).sum()
+
+        di_des = torch.autograd.grad(iscore, pretrained_out.hidden_states, create_graph=True)
+        # choice 2
+        pooled = torch.stack(di_des).mean(0)
+
+        annotations = pooled[torch.arange(features.shape[0])[:, None], zerod_wrd_from_tokens]
+        annotations.masked_fill_(nvalid_mask, 0)
+        annotations = annotations[:, 1:-1] # strip bos, eos
+        bsz, T, annsz = annotations.size()
+        halfsz = annsz // 2
+
+        span_features = torch.cat( # bsz x T x T x dim
+            [annotations[:, :, :halfsz].unsqueeze(1).expand(bsz, T, T, halfsz),
+             annotations[:, :, halfsz:].unsqueeze(2).expand(bsz, T, T, halfsz)], 3)
+        # span_features[b,j,i] is cat of (1st half i-th token rep, 2nd half j-th token rep)
+
+        span_scores = self.f_label(span_features)
+        # pretrained_out.hidden_states are nlayers+1-length tuple of (bsz x T x dim)
+        return span_scores
+
     def compute_loss2(self, batch):
         #import ipdb; ipdb.set_trace()
-        span_scores, _ = self.forward(batch)
+        if self.higher_order:
+            span_scores = self.ho_forward(batch)
+        else:
+            span_scores, _ = self.forward(batch)
         span_labels = batch["span_labels"].to(span_scores.device)
         if self.mode == "bce":
             losses = F.binary_cross_entropy_with_logits( # leaving -100 labels but masking em later
