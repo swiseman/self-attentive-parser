@@ -227,7 +227,7 @@ def run_train(args, hparams):
             )
         )
 
-        if dev_fscore.fscore > best_dev_fscore:
+        if args.nruns ==1 and dev_fscore.fscore > best_dev_fscore:
             if best_dev_model_path is not None:
                 extensions = [".pt"]
                 for ext in extensions:
@@ -443,16 +443,17 @@ def main():
     print(args)
 
     if args.nruns > 1:
-        args.max_epochs = 25
+        args.max_epochs = 6
+        args.checks_per_epoch = 1
         grid = {
             # 'position_embedding_type': ['absolute', 'relative_key'],
-            'clip_grad_norm': [0.0, 1.0, 10.0],
+            'clip_grad_norm': [1.0, 10.0],
             'relu_dropout': [0.1, 0.3, 0.5],
             'share_layers': [True, False],
             # 'inner_mean_pool': [True, False],
             'learning_rate': [1e-5, 3e-5, 5e-5, 1e-4],
             'weight_decay': [0, 1e-4, 1e-3],
-            'learning_rate_warmup_steps': [160, 500, 1000],
+            'learning_rate_warmup_steps': [80, 160, 320],
             'batch_size': [32, 64, 128],
         }
         for j in range(args.nruns):
