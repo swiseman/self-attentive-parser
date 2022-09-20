@@ -516,11 +516,12 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nnz = valid_token_mask.sum(1)
             iscore = self.icls(features.sum(1).div_(nnz.view(-1, 1))).sum()
         else:
+            #import ipdb; ipdb.set_trace()
             iscore = self.icls(features[:, 0]).sum()
 
         di_des = torch.autograd.grad(iscore, pretrained_out.hidden_states, create_graph=True)
         # choice 2
-        pooled = torch.stack(di_des).mean(0)
+        pooled = torch.stack(di_des).mean(0) # nlayers x bsz x maxlen x dim -> bsz x maxlen x dim
 
         annotations = pooled[torch.arange(features.shape[0])[:, None], zerod_wrd_from_tokens]
         annotations.masked_fill_(nvalid_mask, 0)
@@ -535,12 +536,12 @@ class ChartParser(nn.Module, parse_base.BaseParser):
 
         span_scores = self.f_label(span_features)
         # pretrained_out.hidden_states are nlayers+1-length tuple of (bsz x T x dim)
-        return span_scores
+        return span_scores, None
 
     def compute_loss2(self, batch):
         #import ipdb; ipdb.set_trace()
         if self.higher_order:
-            span_scores = self.ho_forward(batch)
+            span_scores, _ = self.ho_forward(batch)
         else:
             span_scores, _ = self.forward(batch)
         span_labels = batch["span_labels"].to(span_scores.device)
@@ -564,9 +565,14 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             self, examples, encoded, return_compressed=False, return_scores=False,
             return_amax=False,
     ):
+        batch = self.pad_encoded(encoded)
+        if self.higher_order:
+            span_scores, tag_scores = self.ho_forward(batch)
+        else:
+            with torch.no_grad():
+                span_scores, tag_scores = self.forward(batch)
+
         with torch.no_grad():
-            batch = self.pad_encoded(encoded)
-            span_scores, tag_scores = self.forward(batch)
             if return_scores:
                 span_scores_np = span_scores.cpu().numpy()
             elif return_amax: # modified from decode_chart.py

@@ -451,7 +451,7 @@ def main():
             'relu_dropout': [0.1, 0.3],
             'share_layers': [False], #, True],
             # 'inner_mean_pool': [True, False],
-            'learning_rate': [1e-5, 3e-5, 1e-4],
+            'learning_rate': [1e-5, 5e-5, 1e-4],
             'weight_decay': [0, 1e-4, 1e-3],
             'learning_rate_warmup_steps': [80, 160, 320, 640],
             'batch_size': [32, 64], #128],
