@@ -146,7 +146,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                         nn.Linear(d_pretrained, d_pretrained),
                         nn.GELU(),
                         nn.LayerNorm(d_pretrained),
-                        nn.Linear(d_pretrained, len(label_vocab)))
+                        nn.Linear(d_pretrained, 1, bias=False))
 
         if hparams.predict_tags:
             self.f_tag = nn.Sequential(
@@ -587,8 +587,8 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                     charts_np = self.decoder.pants(
                        span_scores, lengths.to(span_scores.device), self.stop_thresh)
                 elif self.mode == "bce":
-                    charts_np = self.decoder.charts_from_pytorch_scores_batched2(
-                        span_scores, lengths.to(span_scores.device), thresh=self.stop_thresh)
+                    charts_np = self.decoder.charts_from_pytorch_scores_batched3( #2(
+                        span_scores, lengths.to(span_scores.device))#, thresh=self.stop_thresh)
                 elif self.mode == "mlr":
                     charts_np = self.decoder.charts_from_pytorch_scores_batched3(
                          span_scores, lengths.to(span_scores.device))
