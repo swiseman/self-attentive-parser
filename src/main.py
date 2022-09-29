@@ -260,6 +260,7 @@ def run_train(args, hparams):
             subbatch_max_tokens=args.subbatch_max_tokens,
         ),
     )
+    nsteps = 0
     for epoch in itertools.count(start=1):
         epoch_start_time = time.time()
 
@@ -287,6 +288,7 @@ def run_train(args, hparams):
             )
 
             optimizer.step()
+            nsteps += 1
 
             """
             print(
@@ -311,6 +313,7 @@ def run_train(args, hparams):
 
             if current_processed >= check_every:
                 current_processed -= check_every
+                print("nsteps", nsteps)
                 check_dev()
                 scheduler.step(metrics=best_dev_fscore)
                 #scheduler.step()
@@ -447,16 +450,18 @@ def main():
         args.checks_per_epoch = 1
         grid = {
             # 'position_embedding_type': ['absolute', 'relative_key'],
-            'clip_grad_norm': [0.3, 1.0, 10.0],
+            'clip_grad_norm': [0.3, 1.0],#, 10.0],
             'relu_dropout': [0.1, 0.3],
             'share_layers': [False], #, True],
             # 'inner_mean_pool': [True, False],
-            'learning_rate': [1e-5, 5e-5, 1e-4],
+            'learning_rate': [5e-5, 1e-4, 3e-4],
             'weight_decay': [0, 1e-4, 1e-3],
-            'learning_rate_warmup_steps': [80, 160, 320, 640],
-            'batch_size': [32, 64], #128],
+            'learning_rate_warmup_steps': [160, 320, 640],
+            'batch_size': [32],#, 64], #128],
         }
         for j in range(args.nruns):
+            #if j < 21:
+            #    continue
             torch.manual_seed(args.numpy_seed + j) # this is a dumb hack so we get different stuff
             rdict = {k: v[torch.randint(len(v), (1,)).item()] for k, v in grid.items()}
             for k, v in rdict.items():

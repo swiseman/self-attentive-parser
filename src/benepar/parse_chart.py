@@ -140,7 +140,6 @@ class ChartParser(nn.Module, parse_base.BaseParser):
 
         self.higher_order = hparams.higher_order
         if hparams.higher_order:
-            self.mean_pool = True
             self.icls = nn.Sequential(
                         nn.Dropout(p=hparams.relu_dropout),
                         nn.Linear(d_pretrained, d_pretrained),
@@ -512,16 +511,27 @@ class ChartParser(nn.Module, parse_base.BaseParser):
         nvalid_mask = ~valid_token_mask[:, :, None]
         features.masked_fill_(nvalid_mask, 0)
         # choice 1
-        if self.mean_pool:
-            nnz = valid_token_mask.sum(1)
-            iscore = self.icls(features.sum(1).div_(nnz.view(-1, 1))).sum()
-        else:
-            #import ipdb; ipdb.set_trace()
-            iscore = self.icls(features[:, 0]).sum()
+        # avg pooled features into mlp
+        nnz = valid_token_mask.sum(1)
+        iscore = self.icls(features.sum(1).div_(nnz.view(-1, 1))).sum()
+        # score is sum of avg features
+        # iscore = features.sum(1).div_(nnz.view(-1, 1)).sum() # 2nd best so far
+        # score is max over all features; doesn't really work
+        #iscore = features.view(features.size(0), -1).max(1)[0].sum()
+        # max pooled features into mlp
+        #iscore = self.icls(features.max(1)[0]).sum()
+        # cls features into mlp
+        #iscore = self.icls(features[:, 0]).sum() # best so far
 
         di_des = torch.autograd.grad(iscore, pretrained_out.hidden_states, create_graph=True)
         # choice 2
+        # mean pool over all layers including embeddings
         pooled = torch.stack(di_des).mean(0) # nlayers x bsz x maxlen x dim -> bsz x maxlen x dim
+        # mean pool over all layers except embeddings
+        #pooled = torch.stack(di_des[1:]).mean(0)
+        #pooled = torch.stack(di_des).max(0)[0]
+        #pooled = di_des[1] + di_des[-1]
+        #pooled = di_des[-1]
 
         annotations = pooled[torch.arange(features.shape[0])[:, None], zerod_wrd_from_tokens]
         annotations.masked_fill_(nvalid_mask, 0)
