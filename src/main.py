@@ -3,7 +3,7 @@ import functools
 import itertools
 import os.path
 import time
-
+import math
 import torch
 
 import numpy as np
@@ -131,7 +131,7 @@ def run_train(args, hparams):
         print("Set hparams.force_root_constituent to", hparams.force_root_constituent)
 
     hparams.mode, hparams.share_layers = args.mode, args.share_layers
-    hparams.higher_order, hparams.inner_mean_pool = args.higher_order, args.inner_mean_pool
+    hparams.higher_order, hparams.ho_stuff = args.higher_order, args.ho_stuff
     hparams.stop_thresh = args.stop_thresh
     print("Initializing model...")
     parser = parse_chart.ChartParser(
@@ -200,6 +200,7 @@ def run_train(args, hparams):
     best_dev_fscore = -np.inf
     best_dev_model_path = None
     best_dev_processed = 0
+    current_dev_fscore = None
 
     start_time = time.time()
 
@@ -207,6 +208,7 @@ def run_train(args, hparams):
         nonlocal best_dev_fscore
         nonlocal best_dev_model_path
         nonlocal best_dev_processed
+        nonlocal current_dev_fscore
 
         dev_start_time = time.time()
 
@@ -216,6 +218,7 @@ def run_train(args, hparams):
         )
         #import ipdb; ipdb.set_trace()
         dev_fscore = evaluate.evalb(args.evalb_dir, dev_treebank.trees, dev_predicted)
+        current_dev_fscore = dev_fscore.fscore
 
         print(
             "dev-fscore {} "
@@ -227,7 +230,7 @@ def run_train(args, hparams):
             )
         )
 
-        if args.nruns ==1 and dev_fscore.fscore > best_dev_fscore:
+        if args.nruns == 1 and dev_fscore.fscore > best_dev_fscore:
             if best_dev_model_path is not None:
                 extensions = [".pt"]
                 for ext in extensions:
@@ -261,6 +264,7 @@ def run_train(args, hparams):
         ),
     )
     nsteps = 0
+    best_sd = None
     for epoch in itertools.count(start=1):
         epoch_start_time = time.time()
 
@@ -315,8 +319,15 @@ def run_train(args, hparams):
                 current_processed -= check_every
                 print("nsteps", nsteps)
                 check_dev()
-                scheduler.step(metrics=best_dev_fscore)
-                #scheduler.step()
+                if ((math.isnan(current_dev_fscore) and best_dev_fscore >= 10)
+                      or current_dev_fscore <= 0.5*best_dev_fscore):
+                    print("rewinding to last good checkpt...")
+                    parser.load_state_dict(best_sd)
+                    scheduler._reduce_lr(None)
+                else:
+                    scheduler.step(metrics=best_dev_fscore)
+                if current_dev_fscore == best_dev_fscore: # we improved
+                    best_sd = {k: v.clone() for k, v in parser.state_dict().items()}
             else:
                 scheduler.step()
 
@@ -422,7 +433,7 @@ def main():
     subparser.add_argument("--mode", type=str, default=None, choices=["bce", "mlr"])
     subparser.add_argument("--higher-order", action="store_true", help="")
     subparser.add_argument("--share-layers", action="store_true", help="")
-    subparser.add_argument("--inner-mean-pool", action="store_true", help="")
+    subparser.add_argument("--ho-stuff", type=str, default=None, help="")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
     subparser.add_argument("--max-epochs", type=int, default=None)
     subparser.add_argument("--nruns", type=int, default=1)
@@ -446,15 +457,17 @@ def main():
     print(args)
 
     if args.nruns > 1:
-        args.max_epochs = 6
+        args.max_epochs = 5
         args.checks_per_epoch = 1
         grid = {
             # 'position_embedding_type': ['absolute', 'relative_key'],
             'clip_grad_norm': [0.3, 1.0],#, 10.0],
-            'relu_dropout': [0.1, 0.3],
+            'relu_dropout': [0.1],
             'share_layers': [False], #, True],
-            # 'inner_mean_pool': [True, False],
-            'learning_rate': [5e-5, 1e-4, 3e-4],
+            'ho_stuff': ["amlp+apoolall", "amlp+apool0",
+                         "afeats+apoolall", "afeats+apool0",
+                         "mmlp+apoolall", "mmlp+apool0"],
+            'learning_rate': [3e-5, 5e-5, 1e-4],
             'weight_decay': [0, 1e-4, 1e-3],
             'learning_rate_warmup_steps': [160, 320, 640],
             'batch_size': [32],#, 64], #128],
