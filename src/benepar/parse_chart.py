@@ -515,6 +515,7 @@ class ChartParser(nn.Module, parse_base.BaseParser):
             nnz = valid_token_mask.sum(1)
             iscore = self.icls(features.sum(1).div_(nnz.view(-1, 1))).sum()
         elif "afeats" in self.ho_stuff: # score is sum of avg features
+            nnz = valid_token_mask.sum(1)
             iscore = features.sum(1).div_(nnz.view(-1, 1)).sum() # 2nd best so far
         elif "mfeats" in self.ho_stuff: # score is max over all features; doesn't really work
             iscore = features.view(features.size(0), -1).max(1)[0].sum()
@@ -560,15 +561,19 @@ class ChartParser(nn.Module, parse_base.BaseParser):
                 #pos_weight=torch.full((span_labels.size(-1),), 1.5, device=span_scores.device))
             mask = span_labels != -100
             #mask[..., 0] = 0 # also we don't really need to predict the 0 label
-            span_loss = (losses*mask).sum() / mask.sum()
+            #nnt = mask.size(-1)
+            #ca_nnt = 1.0
+            span_loss = (losses*mask).sum() #/ (mask.sum() * nnt/ca_nnt)
+            nspans = mask.sum()
         else:
             losses = F.cross_entropy(
-                span_scores.view(-1, span_scores.size(3)), span_labels.view(-1))
+                span_scores.view(-1, span_scores.size(3)), span_labels.view(-1), reduction='sum')
             span_loss = losses # should already only avg over stuff that isn't -100
+            nspans = (span_labels != -100).sum()
         #span_loss = self.criterion(span_scores, span_labels)
         # Divide by the total batch size, not by the subbatch size
         # span_loss = span_loss / batch["batch_size"]
-        return span_loss
+        return span_loss, nspans.item()
 
     def _parse_encoded(
             self, examples, encoded, return_compressed=False, return_scores=False,

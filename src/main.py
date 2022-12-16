@@ -6,6 +6,8 @@ import time
 import math
 import torch
 
+torch.backends.cuda.matmul.allow_tf32 = True
+
 import numpy as np
 
 from benepar import char_lstm
@@ -87,8 +89,6 @@ def run_train(args, hparams):
     torch.manual_seed(seed_from_numpy)
 
     hparams.set_from_args(args)
-    print("Hyperparameters:")
-    hparams.print()
 
     print("Loading training trees from {}...".format(args.train_path))
     train_treebank = treebanks.load_trees(
@@ -133,6 +133,10 @@ def run_train(args, hparams):
     hparams.mode, hparams.share_layers = args.mode, args.share_layers
     hparams.higher_order, hparams.ho_stuff = args.higher_order, args.ho_stuff
     hparams.stop_thresh = args.stop_thresh
+
+    print("Hyperparameters:")
+    hparams.print()
+
     print("Initializing model...")
     parser = parse_chart.ChartParser(
         tag_vocab=tag_vocab,
@@ -169,16 +173,18 @@ def run_train(args, hparams):
     ]
     optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=hparams.learning_rate)
 
-    scheduler = learning_rates.WarmupThenReduceLROnPlateau(
-        optimizer,
-        hparams.learning_rate_warmup_steps,
-        mode="max",
-        factor=hparams.step_decay_factor,
-        patience=hparams.step_decay_patience * hparams.checks_per_epoch,
-        verbose=True,)
+    if args.lrsched is None:
+        scheduler = learning_rates.WarmupThenReduceLROnPlateau(
+            optimizer,
+            hparams.learning_rate_warmup_steps,
+            mode="max",
+            factor=hparams.step_decay_factor,
+            patience=hparams.step_decay_patience * hparams.checks_per_epoch,
+            verbose=True,)
+    else:
+        from transformers import get_constant_schedule_with_warmup
+        scheduler = get_constant_schedule_with_warmup(optimizer, hparams.learning_rate_warmup_steps)
 
-    #from transformers import get_constant_schedule_with_warmup
-    #scheduler = get_constant_schedule_with_warmup(optimizer, hparams.learning_rate_warmup_steps)
     """
     def lr_lambda(current_step):
         if current_step < hparams.learning_rate_warmup_steps:
@@ -216,15 +222,16 @@ def run_train(args, hparams):
             dev_treebank.without_gold_annotations(),
             subbatch_max_tokens=args.subbatch_max_tokens,
         )
-        #import ipdb; ipdb.set_trace()
+#        import ipdb; ipdb.set_trace()
         dev_fscore = evaluate.evalb(args.evalb_dir, dev_treebank.trees, dev_predicted)
         current_dev_fscore = dev_fscore.fscore
 
         print(
             "dev-fscore {} "
+            "lr {:.5f} "
             "dev-elapsed {} "
             "total-elapsed {}".format(
-                dev_fscore,
+                dev_fscore, scheduler.optimizer.param_groups[0]['lr'],
                 format_elapsed(dev_start_time),
                 format_elapsed(start_time),
             )
@@ -271,11 +278,15 @@ def run_train(args, hparams):
         for batch_num, batch in enumerate(data_loader, start=1):
             optimizer.zero_grad()
             parser.train()
+            #import ipdb; ipdb.set_trace()
+            #(batch[0][1]['span_labels'] != -100).sum()
 
+            totespans = 0.0
             batch_loss_value = 0.0
             for subbatch_size, subbatch in batch:
                 if args.mode:
-                    loss = parser.compute_loss2(subbatch)
+                    loss, nspans = parser.compute_loss2(subbatch)
+                    totespans += nspans
                 else:
                     loss = parser.compute_loss(subbatch)
                 loss_value = float(loss.data.cpu().numpy())
@@ -286,6 +297,11 @@ def run_train(args, hparams):
                 total_processed += subbatch_size
                 current_processed += subbatch_size
 
+            if totespans > 0:
+                for p in parser.parameters():
+                    if p.grad is not None:
+                        p.grad.detach().div_(totespans)
+
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 #clippable_parameters, grad_clip_threshold
                 parser.parameters(), hparams.clip_grad_norm
@@ -293,7 +309,6 @@ def run_train(args, hparams):
 
             optimizer.step()
             nsteps += 1
-
             """
             print(
                 "epoch {:,} "
@@ -319,11 +334,13 @@ def run_train(args, hparams):
                 current_processed -= check_every
                 print("nsteps", nsteps)
                 check_dev()
-                if ((math.isnan(current_dev_fscore) and best_dev_fscore >= 10)
+                if args.lrsched is None and ((math.isnan(current_dev_fscore) and best_dev_fscore >= 10)
                       or current_dev_fscore <= 0.5*best_dev_fscore):
                     print("rewinding to last good checkpt...")
                     parser.load_state_dict(best_sd)
-                    scheduler._reduce_lr(None)
+                    scheduler._reduce_lr(scheduler.last_epoch+1)
+                elif args.lrsched is not None: # no metrics stuff
+                    scheduler.step()
                 else:
                     scheduler.step(metrics=best_dev_fscore)
                 if current_dev_fscore == best_dev_fscore: # we improved
@@ -341,7 +358,8 @@ def run_train(args, hparams):
 
         if args.max_epochs is not None and epoch >= args.max_epochs:
             break
-
+        if args.max_steps is not None and nsteps >= args.max_steps:
+            break
 
 def run_test(args):
     print("Loading test trees from {}...".format(args.test_path))
@@ -363,7 +381,6 @@ def run_test(args):
         print("Removing part-of-speech tagging head...")
         parser.f_tag = None
     parser.stop_thresh = args.stop_thresh
-    parser.pants = args.pants
     if args.parallelize:
         parser.parallelize()
     elif torch.cuda.is_available():
@@ -434,9 +451,11 @@ def main():
     subparser.add_argument("--higher-order", action="store_true", help="")
     subparser.add_argument("--share-layers", action="store_true", help="")
     subparser.add_argument("--ho-stuff", type=str, default=None, help="")
+    subparser.add_argument("--lrsched", type=str, default=None, help="")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
     subparser.add_argument("--max-epochs", type=int, default=None)
     subparser.add_argument("--nruns", type=int, default=1)
+    subparser.add_argument("--gseed", type=int, default=0)
 
     subparser = subparsers.add_parser("test")
     subparser.set_defaults(callback=run_test)
@@ -451,38 +470,48 @@ def main():
     subparser.add_argument("--output-path", default="")
     subparser.add_argument("--no-predict-tags", action="store_true")
     subparser.add_argument("--stop-thresh", type=float, default=0.0)
-    subparser.add_argument("--pants", action="store_true")
 
     args = parser.parse_args()
     print(args)
 
     if args.nruns > 1:
-        args.max_epochs = 5
+        #args.max_epochs = 5
+        args.max_steps = 5000
         args.checks_per_epoch = 1
+        gen = torch.Generator()
+        gen.manual_seed(args.gseed)
         grid = {
             # 'position_embedding_type': ['absolute', 'relative_key'],
-            'clip_grad_norm': [0.3, 1.0],#, 10.0],
+            'clip_grad_norm': [0.1, 0.3],#, 10.0],
             'relu_dropout': [0.1],
             'share_layers': [False], #, True],
-            'ho_stuff': ["amlp+apoolall", "amlp+apool0",
-                         "afeats+apoolall", "afeats+apool0",
-                         "mmlp+apoolall", "mmlp+apool0"],
-            'learning_rate': [3e-5, 5e-5, 1e-4],
-            'weight_decay': [0, 1e-4, 1e-3],
-            'learning_rate_warmup_steps': [160, 320, 640],
-            'batch_size': [32],#, 64], #128],
+            'ho_stuff': [#"amlp+apoolall", "amlp+apool0",
+                         #"afeats+apoolall", "afeats+apool0",
+                         "mmlp+apoolall"], #"mmlp+apool0"],
+            'learning_rate': [5e-5, 1e-4],
+            'weight_decay': [1e-4, 1e-3],
+            'learning_rate_warmup_steps': [160, 500, 1000],
+            'batch_size': [64, 128],
+            'lrsched': ["con+warm", None],
         }
+        import itertools
+        if args.gseed < 0:
+            keys = list(grid.keys())
+            lengths = [len(grid[key]) for key in keys]
+            prods = itertools.product(*[range(n) for n in lengths])
+            args.nruns = 10000
+
         for j in range(args.nruns):
-            #if j < 21:
-            #    continue
-            torch.manual_seed(args.numpy_seed + j) # this is a dumb hack so we get different stuff
-            rdict = {k: v[torch.randint(len(v), (1,)).item()] for k, v in grid.items()}
+            if args.gseed < 0:
+                try:
+                    prod = next(prods)
+                    rdict = {keys[i]: grid[keys[i]][idx] for i, idx in enumerate(prod)}
+                except StopIteration:
+                    break
+            else:
+                rdict = {k: v[torch.randint(len(v), (1,), generator=gen).item()] for k, v in grid.items()}
             for k, v in rdict.items():
-                if False and k == "train_batch_size" and v > 64:
-                    args.train_batch_size = 64
-                    args.grad_accum_steps = v // 64
-                else:
-                    args.__dict__[k] = v
+                args.__dict__[k] = v
             args.callback(args)
     else:
         args.callback(args)
